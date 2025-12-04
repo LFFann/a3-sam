@@ -1,5 +1,5 @@
 # KnowSAM
-Official code for "[Learnable Prompting SAM-induced Knowledge Distillation for Semi-supervised Medical Image Segmentation](https://arxiv.org/pdf/2412.13742)"
+Official code for "[Learnable Prompting SAM-induced Knowledge Distillation for Semi-supervised Medical Image Segmentation](https://ieeexplore.ieee.org/stamp/stamp.jsp?tp=&arnumber=10843257)"
 
 ## Installation
 
@@ -8,6 +8,14 @@ To set up the environment and install dependencies, run:
 ```bash
 pip install -r requirements.txt
 ```
+
+## Dataset
+
+We provide Google Drive access links to the datasets employed in this study, among which are two open-source datasets cited in the corresponding paper:
+
+[Endoscope Dataset](https://drive.google.com/drive/folders/1uxPGLAon7fTH2qbnohRYOZomApKs9wjS?hl=zh)
+
+[BCSS Dataset](https://drive.google.com/file/d/1Xig3I0rBG9Te3wh8ZaFeQKav-bUxf5YL/view?usp=drive_link)
 
 ## Extract Sample Data
 
