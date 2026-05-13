@@ -38,6 +38,11 @@ class build_Dataset(Dataset):
             sample_list_val = os.listdir(val_path)
             self.sample_list = [os.path.join(val_path, item) for item in sample_list_val]
             print("val total {} samples".format(len(self.sample_list)))
+        elif self.split == "test":
+            test_path = os.path.join(self.data_dir + "/test/image")
+            sample_list_test = os.listdir(test_path)
+            self.sample_list = [os.path.join(test_path, item) for item in sample_list_test]
+            print("test total {} samples".format(len(self.sample_list)))
         elif self.split == "train_semi_list":
             labeled_path = os.path.join(self.data_dir + "/train.list")
             with open(labeled_path, 'r') as f:
@@ -127,9 +132,13 @@ class build_Dataset(Dataset):
             # image = (image - self.pixel_mean) / self.pixel_std
             image = image / 255.0
             image = image.astype(np.float32)
-            label_path = case.replace("image", "mask")
-
-            label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE) / 255
+            is_unlabeled_train_sample = self.split == "train_semi" and idx >= len(self.sample_list_labeled)
+            if is_unlabeled_train_sample:
+                # Unlabeled samples use a zero mask placeholder so training does not depend on unlabeled GT files.
+                label = np.zeros(image.shape[:2], dtype=np.float32)
+            else:
+                label_path = case.replace("image", "mask")
+                label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE) / 255
             if "val" in self.split or "test" in self.split:
                 if self.transform:
                     data = self.transform(image=image, mask=label)
@@ -151,8 +160,9 @@ class build_Dataset(Dataset):
             image = image.transpose(2, 0, 1).astype('float32')
             ori_image = ori_image.transpose(2, 0, 1).astype('float32')
             image, label = torch.tensor(image), torch.tensor(label)
-            if "test" in self.split:
-                sample = {"image": image, "label": label, "ori_image": ori_image}
+            case_name = os.path.basename(case)
+            if "val" in self.split or "test" in self.split:
+                sample = {"image": image, "label": label, "ori_image": torch.tensor(ori_image), "case_name": case_name}
             else:
                 sample = {"image": image, "label": label,}
             return sample
@@ -163,6 +173,8 @@ class build_Dataset(Dataset):
                 h5f = h5py.File(case)
                 image = h5f['image'][:].astype(np.float32)
                 label = h5f['label'][:].astype(np.float32)
+                if idx >= self.sample_list_labeled:
+                    label = np.zeros_like(label, dtype=np.float32)
                 if self.transform:
                     if idx < self.sample_list_labeled:
                         data = self.transform["train_weak"](image=image, mask=label)
