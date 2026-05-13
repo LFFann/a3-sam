@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DATA_PATH="${DATA_PATH:-./SampleData}"
-DATASET="${DATASET:-/260513_data_label1}"
+DATASET="${DATASET:-/260513_data_multiclass}"
 SPLIT="${SPLIT:-test}"
 IMAGE_SIZE="${IMAGE_SIZE:-256}"
 NUM_WORKERS="${NUM_WORKERS:-0}"
-MODEL_PATH="${MODEL_PATH:-./Results/train_260513_data_label1_v100_semi_106_117_13_13/SGDL_best_model.pth}"
-SAVE_DIR="${SAVE_DIR:-./Results/train_260513_data_label1_v100_semi_106_117_13_13/prediction_test}"
+SNAPSHOT_PATH="${SNAPSHOT_PATH:-./Results/Multiclass_KnowSAM_V100_106_117_13_13}"
+MODEL_PATH="${MODEL_PATH:-${SNAPSHOT_PATH}/SGDL_best_model.pth}"
+SAVE_DIR="${SAVE_DIR:-${SNAPSHOT_PATH}/prediction_${SPLIT}}"
 
 if [[ ! "${OMP_NUM_THREADS:-}" =~ ^[1-9][0-9]*$ ]]; then
   export OMP_NUM_THREADS=8
@@ -24,18 +25,15 @@ fi
 
 mkdir -p "${SAVE_DIR}"
 
-echo "Starting V100 evaluation with:"
+echo "Starting Multiclass KnowSAM evaluation with:"
 echo "  PYTHON_BIN=${PYTHON_BIN}"
 echo "  DATA_PATH=${DATA_PATH}"
 echo "  DATASET=${DATASET}"
 echo "  SPLIT=${SPLIT}"
-echo "  IMAGE_SIZE=${IMAGE_SIZE}"
 echo "  MODEL_PATH=${MODEL_PATH}"
 echo "  SAVE_DIR=${SAVE_DIR}"
-echo "  NUM_WORKERS=${NUM_WORKERS}"
-echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
-"${PYTHON_BIN}" prediction.py \
+"${PYTHON_BIN}" ./variants/Multiclass_KnowSAM/prediction_multiclass.py \
   --data_path "${DATA_PATH}" \
   --dataset "${DATASET}" \
   --split "${SPLIT}" \
@@ -47,5 +45,3 @@ echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
 
 echo "Evaluation finished. Outputs:"
 echo "  ${SAVE_DIR}"
-echo "  ${SAVE_DIR}/prediction.log"
-echo "  ${SAVE_DIR}/monitor"

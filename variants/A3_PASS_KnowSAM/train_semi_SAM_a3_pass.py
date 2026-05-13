@@ -28,7 +28,7 @@ from utils.utils import patients_to_slices
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="./SampleData")
-    parser.add_argument("--dataset", type=str, default="/tumor_1")
+    parser.add_argument("--dataset", type=str, default="/260513_data_label1")
     parser.add_argument("--labeled_num", type=int, default=1)
     parser.add_argument("--num_classes", type=int, default=2)
     parser.add_argument("--in_channels", type=int, default=3)

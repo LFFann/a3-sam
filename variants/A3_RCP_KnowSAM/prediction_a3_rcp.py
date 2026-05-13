@@ -29,7 +29,7 @@ from trainer_a3_rcp import Trainer
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str, default='./SampleData', help='dataset root path')
-    parser.add_argument('--dataset', type=str, default='/tumor_1', help='dataset name')
+    parser.add_argument('--dataset', type=str, default='/260513_data_label1', help='dataset name')
     parser.add_argument('--split', type=str, default='test', help='dataset split')
     parser.add_argument('--num_classes', type=int, default=2, help='output channel of network')
     parser.add_argument('--in_channels', type=int, default=3, help='input channel of network')
@@ -56,13 +56,13 @@ def parse_args():
     parser.add_argument("--encoder_adapter", type=bool, default=True, help="use adapter")
     parser.add_argument("--sam_checkpoint", type=str, default="./sam_vit_b_01ec64.pth", help="sam checkpoint")
     parser.add_argument('--SGDL_model_path', type=str,
-                        default="./Results/A3_RCP_KnowSAM/fold_0/SGDL_best_model.pth",
+                        default="./Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/SGDL_best_model.pth",
                         help='SGDL model weight path')
     parser.add_argument('--sam_model_path', type=str,
-                        default="./Results/A3_RCP_KnowSAM/fold_0/sam_best_model.pth",
+                        default="./Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/sam_best_model.pth",
                         help='SAM model weight path')
     parser.add_argument('--save_dir', type=str,
-                        default="./Results/A3_RCP_KnowSAM/fold_0/prediction_test",
+                        default="./Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/prediction_test",
                         help='directory to save logs and visualizations')
     parser.add_argument('--num_workers', type=int, default=0)
     parser.add_argument('--uckd_alpha', type=float, default=2.0)

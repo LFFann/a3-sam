@@ -28,7 +28,7 @@ from utils.utils import eval
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="./SampleData")
-    parser.add_argument("--dataset", type=str, default="/tumor_1")
+    parser.add_argument("--dataset", type=str, default="/260513_data_label1")
     parser.add_argument("--split", type=str, default="test")
     parser.add_argument("--num_classes", type=int, default=2)
     parser.add_argument("--in_channels", type=int, default=3)
@@ -49,8 +49,8 @@ def parse_args():
     parser.add_argument("--sam_checkpoint", type=str, default="./sam_vit_b_01ec64.pth")
     parser.add_argument("--num_workers", type=int, default=0)
 
-    parser.add_argument("--PASS_model_path", type=str, default="./Results/A3_PASS_KnowSAM/fold_0/PASS_best_model.pth")
-    parser.add_argument("--save_dir", type=str, default="./Results/A3_PASS_KnowSAM/fold_0/prediction_test")
+    parser.add_argument("--PASS_model_path", type=str, default="./Results/A3_PASS_KnowSAM_V100_label1_106_117_13_13/fold_0/PASS_best_model.pth")
+    parser.add_argument("--save_dir", type=str, default="./Results/A3_PASS_KnowSAM_V100_label1_106_117_13_13/fold_0/prediction_test")
 
     parser.add_argument("--pass_state_size", type=int, default=64)
     parser.add_argument("--pass_state_dim", type=int, default=64)

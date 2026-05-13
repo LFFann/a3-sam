@@ -28,7 +28,7 @@ parser.add_argument('--data_path', type=str, default='./SampleData',
 parser.add_argument('--labeled_num', type=int, default=1,
                     help='Percentage of label quantity')
 
-parser.add_argument('--dataset', type=str, default='/tumor_1',
+parser.add_argument('--dataset', type=str, default='/260513_data_label1',
                     help='Name of Experiment')
 # parser.add_argument('--dataset', type=str, default='/ISIC_TrainDataset_10',
 #                     help='Name of Experiment')

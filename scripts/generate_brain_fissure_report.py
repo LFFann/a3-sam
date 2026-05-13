@@ -24,10 +24,10 @@ ASSET_DIR = DOC_DIR / "report_assets"
 PPT_PATH = DOC_DIR / "KnowSAM_超声脑部外侧裂半监督分割汇报.pptx"
 MD_PATH = DOC_DIR / "KnowSAM_超声脑部外侧裂半监督分割汇报提纲.md"
 
-RESULT_DIR = ROOT / "Results" / "train_tumor_1_v100_semi_40_109_9_9"
+RESULT_DIR = ROOT / "Results" / "train_260513_data_label1_v100_semi_106_117_13_13"
 MONITOR_DIR = RESULT_DIR / "monitor"
 PRED_DIR = RESULT_DIR / "prediction_test"
-MANIFEST_PATH = ROOT / "SampleData" / "tumor_1" / "split_manifest.json"
+MANIFEST_PATH = ROOT / "SampleData" / "260513_data_label1" / "split_manifest.json"
 
 
 plt.rcParams["font.sans-serif"] = ["Microsoft YaHei", "SimHei", "Arial Unicode MS", "DejaVu Sans"]
@@ -325,7 +325,7 @@ def build_ppt(manifest: dict, data_stats: dict, monitor_summary: dict, pred_json
     add_title(slide, "超声脑部外侧裂半监督分割汇报")
     add_textbox(
         slide,
-        "基于新数据划分 40/109/9/9 的 A3 切面专项结果与优化方案",
+        "基于新数据划分 106/117/13/13 的 A3 切面专项结果与优化方案",
         Inches(0.55), Inches(1.0), Inches(6.8), Inches(0.9),
         font_size=24, bold=True, fill=(230, 239, 249), color=(31, 78, 121)
     )
@@ -333,7 +333,7 @@ def build_ppt(manifest: dict, data_stats: dict, monitor_summary: dict, pred_json
         slide,
         [
             "任务对象：仅针对 A3 切面进行外侧裂半监督分割，不再引入其他切面和视频表述。",
-            f"当前 A3 数据总量：{data_stats['total_samples']}，其中 labeled/unlabeled/val/test = 40/109/9/9。",
+            f"当前 A3 数据总量：{data_stats['total_samples']}，其中 labeled/unlabeled/val/test = 106/117/13/13。",
             f"数据组成：68 个已标注 A3，99 个纯未标注 A3。",
             f"新结果：best val Dice = {best_val['sgdl_mean_dice']:.4f}，test Dice = {test_summary['avg_dice']:.4f}。",
         ],
@@ -509,7 +509,7 @@ def build_ppt(manifest: dict, data_stats: dict, monitor_summary: dict, pred_json
         [
             "文献启发：SemiSAM+、PH-Net、CPC-SAM。",
             "实现方式：把未标注 A3 分成高置信池和困难池，采用 curriculum learning 或 top-k replay。",
-            "这条创新最符合新数据划分 40/109/9/9 的特点，能突出“新数据组织带来的方法升级”。",
+            "这条创新最符合新数据划分 106/117/13/13 的特点，能突出“新数据组织带来的方法升级”。",
         ],
         Inches(7.0), Inches(1.9), Inches(5.5), Inches(3.5), font_size=17
     )
@@ -575,7 +575,7 @@ def build_ppt(manifest: dict, data_stats: dict, monitor_summary: dict, pred_json
     add_bullets(
         slide,
         [
-            "结论 1：在新的 40/109/9/9 A3 划分上，KnowSAM 已取得较好的验证和测试结果，说明大规模未标注 A3 确实有效。",
+            "结论 1：在新的 106/117/13/13 A3 划分上，KnowSAM 已取得较好的验证和测试结果，说明大规模未标注 A3 确实有效。",
             "结论 2：当前主要问题不再是“能不能学到目标”，而是“困难边界和低置信区域能否更稳”。",
             "结论 3：后续优化应围绕 A3 专项展开，不建议继续在汇报中强调多切面或视频扩展。",
         ],

@@ -21,7 +21,7 @@ parser.add_argument('--data_path', type=str, default='./SampleData',
 parser.add_argument('--labeled_num', type=int, default=1,
                     help='Percentage of label quantity')
 
-parser.add_argument('--dataset', type=str, default='/tumor_1',
+parser.add_argument('--dataset', type=str, default='/260513_data_label1',
                     help='Name of Experiment')
 # parser.add_argument('--dataset', type=str, default='/ISIC_TrainDataset_10',
 #                     help='Name of Experiment')
@@ -48,6 +48,10 @@ parser.add_argument('--batch_size', type=int, default=24,
                     help='batch_size per gpu')
 parser.add_argument('--labeled_bs', type=int, default=12,
                     help='labeled_batch_size per gpu')
+parser.add_argument('--num_workers', type=int, default=2,
+                    help='number of workers for train dataloader')
+parser.add_argument('--val_num_workers', type=int, default=1,
+                    help='number of workers for val dataloader')
 parser.add_argument('--seed', type=int,  default=42,
                     help='random seed')
 
@@ -55,6 +59,10 @@ parser.add_argument('--mixed_iterations', type=int, default=12000,
                     help='maximum epoch number to train')
 parser.add_argument('--max_iterations', type=int, default=50000,
                     help='maximum epoch number to train')
+parser.add_argument('--val_interval', type=int, default=200,
+                    help='validation interval in iterations')
+parser.add_argument('--snapshot_path', type=str, default='',
+                    help='custom snapshot path for outputs')
 
 parser.add_argument('--n_fold', type=int, default=1,
                     help='maximum epoch number to train')
@@ -103,14 +111,22 @@ def train(args, snapshot_path):
 
     # sampler
     total_slices = len(train_dataset)
-    labeled_slice = patients_to_slices(args.dataset, args.labeled_num)
+    if hasattr(train_dataset, "sample_list_labeled") and hasattr(train_dataset, "sample_list_unlabeled"):
+        labeled_slice = len(train_dataset.sample_list_labeled)
+        unlabeled_slice = len(train_dataset.sample_list_unlabeled)
+        logging.info("Using dataset split counts: %d labeled, %d unlabeled", labeled_slice, unlabeled_slice)
+    else:
+        labeled_slice = patients_to_slices(args.dataset, args.labeled_num)
+        unlabeled_slice = total_slices - labeled_slice
+        logging.info("Using preset split counts from labeled_num=%s: %d labeled, %d unlabeled",
+                     str(args.labeled_num), labeled_slice, unlabeled_slice)
     labeled_idxs = list(range(0, labeled_slice))
     unlabeled_idxs = list(range(labeled_slice, total_slices))
     batch_sampler = TwoStreamBatchSampler(labeled_idxs, unlabeled_idxs, batch_size, batch_size-args.labeled_bs)
 
     # dataloader
-    train_loader = DataLoader(train_dataset, batch_sampler=batch_sampler, num_workers=2, pin_memory=True, worker_init_fn=worker_init_fn)
-    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=1)
+    train_loader = DataLoader(train_dataset, batch_sampler=batch_sampler, num_workers=args.num_workers, pin_memory=True, worker_init_fn=worker_init_fn)
+    val_loader = DataLoader(val_dataset, batch_size=1, shuffle=False, num_workers=args.val_num_workers)
     logging.info("{} iterations per epoch".format(len(train_loader)))
     max_epoch = max_iterations // len(train_loader) + 1
     iterator = tqdm(range(max_epoch), ncols=70)
@@ -122,11 +138,13 @@ def train(args, snapshot_path):
             volume_batch, label_batch = sampled_batch['image'].cuda(), sampled_batch['label'].cuda()
             trainer.train(volume_batch, label_batch, iter_num)
             iter_num = iter_num + 1
-            if iter_num > 0 and iter_num % 200 == 0:
+            if args.val_interval > 0 and iter_num > 0 and iter_num % args.val_interval == 0:
                 if "ACDC" not in args.dataset:
                     trainer.val(val_loader, snapshot_path, iter_num)
                 else:
                     trainer.val_ACDC(val_loader, snapshot_path, iter_num)
+            if iter_num >= max_iterations:
+                return
 
 
 if __name__ == '__main__':
@@ -138,7 +156,12 @@ if __name__ == '__main__':
         torch.manual_seed(2024)
         torch.cuda.manual_seed(2024)
 
-        snapshot_path = "./Results/Result_tumor_1/fold_" + str(fold)
+        if args.snapshot_path:
+            snapshot_path = args.snapshot_path
+            if args.n_fold > 1:
+                snapshot_path = os.path.join(snapshot_path, "fold_" + str(fold))
+        else:
+            snapshot_path = "./Results/Result_260513_data_label1/fold_" + str(fold)
 
         if not os.path.exists(snapshot_path):
             os.makedirs(snapshot_path)

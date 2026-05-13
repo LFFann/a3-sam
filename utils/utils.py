@@ -11,7 +11,31 @@ from hausdorff import hausdorff_distance
 
 
 def eval(y_true, y_pred, thr=0.5, epsilon=0.001):
-    if y_pred.shape[1] == 1:
+    if y_pred.shape[1] > 2:
+        num_classes = y_pred.shape[1]
+        y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
+        y_pred = torch.argmax(y_pred, dim=1).to(torch.float32).squeeze(0).cpu().detach().numpy()
+        class_metrics = []
+        for class_idx in range(1, num_classes):
+            pred = y_pred == class_idx
+            true = y_true == class_idx
+            pred_sum = pred.sum()
+            true_sum = true.sum()
+            if pred_sum == 0 and true_sum == 0:
+                class_metrics.append((1.0, 1.0, 0.0))
+            elif pred_sum == 0 or true_sum == 0:
+                class_metrics.append((0.0, 0.0, float("nan")))
+            else:
+                class_metrics.append((
+                    metric.binary.dc(pred, true),
+                    metric.binary.jc(pred, true),
+                    hausdorff_distance(true.astype(np.uint8), pred.astype(np.uint8)) * 0.95,
+                ))
+        if not class_metrics:
+            return 0.0, 0.0, float("nan")
+        metrics_array = np.array(class_metrics, dtype=np.float32)
+        return [float(np.nanmean(metrics_array[:, i])) for i in range(3)]
+    elif y_pred.shape[1] == 1:
         y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
         y_pred = (y_pred > thr).to(torch.float32).squeeze(0).squeeze(0).cpu().detach().numpy()
     else:
@@ -26,7 +50,18 @@ def eval(y_true, y_pred, thr=0.5, epsilon=0.001):
 
 
 def dice_coef(y_true, y_pred, thr=0.5, epsilon=0.001):
-    if y_pred.shape[1] > 1:
+    if y_pred.shape[1] > 2:
+        num_classes = y_pred.shape[1]
+        y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
+        y_pred = torch.argmax(y_pred, dim=1).to(torch.float32).squeeze(0).cpu().detach().numpy()
+        dice_scores = []
+        for class_idx in range(1, num_classes):
+            pred = y_pred == class_idx
+            true = y_true == class_idx
+            den = true.sum() + pred.sum()
+            dice_scores.append(((2 * (true * pred).sum()) / (den + epsilon)) if den > 0 else 1.0)
+        return float(np.mean(dice_scores)) if dice_scores else 0.0
+    elif y_pred.shape[1] > 1:
         y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
         y_pred = (y_pred > thr).to(torch.float32).squeeze(0)[1].cpu().detach().numpy()
     else:
@@ -103,6 +138,8 @@ def patients_to_slices(dataset, patiens_num):
                     "14": 256, "21": 396, "28": 512, "35": 664, "140": 1312}
     elif "tumor" in dataset:
         ref_dict = {"1": 15, "10": 145, "20": 290, "30": 435, }
+    elif "260513_data" in dataset:
+        ref_dict = {"1": 106}
     elif "ISIC" in dataset:
         ref_dict = {"10": 207, "30": 622, }
     elif "thyroid" in dataset:

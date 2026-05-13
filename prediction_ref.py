@@ -46,7 +46,7 @@ if __name__ == '__main__':
                         default='./SampleData',
                         help='Name of Experiment')
 
-    parser.add_argument('--dataset', type=str, default='/tumor_1',
+    parser.add_argument('--dataset', type=str, default='/260513_data_label1',
                         help='Name of Experiment')
 
     parser.add_argument('--num_classes', type=int, default=2,
@@ -62,11 +62,11 @@ if __name__ == '__main__':
     parser.add_argument('--thd', type=bool, default=False, help='3d or not')
 
     parser.add_argument('--sam_model_path', type=str,
-                        default="./Results/Result_tumor_10/fold_0/sam_best_model.pth",
+                        default="./Results/train_260513_data_label1_v100_semi_106_117_13_13/sam_best_model.pth",
                         help='model weight path')
 
     parser.add_argument('--SGDL_model_path', type=str,
-                        default="./Results/Result_tumor_10/fold_0/SGDL_best_model.pth",
+                        default="./Results/train_260513_data_label1_v100_semi_106_117_13_13/SGDL_best_model.pth",
                         help='model weight path')
 
     parser.add_argument('--device', type=str, default='cuda')
@@ -75,7 +75,7 @@ if __name__ == '__main__':
     Largest = False
     data_transforms = build_transforms(args)
 
-    test_dataset_list = ["test_CVC-300", "test_CVC-ClinicDB",]
+    test_dataset_list = ["test"]
 
     for test_dataset_name in test_dataset_list:
         test_dataset = build_Dataset(args, data_dir=args.data_path + args.dataset, split=test_dataset_name,

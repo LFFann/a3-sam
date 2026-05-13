@@ -21,7 +21,7 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--data_path', type=str, default='./SampleData',
                         help='dataset root path')
-    parser.add_argument('--dataset', type=str, default='/tumor_2',
+    parser.add_argument('--dataset', type=str, default='/260513_data_label1',
                         help='dataset name')
     parser.add_argument('--split', type=str, default='test',
                         help='dataset split to evaluate, e.g. test, val, or dataset-specific test split')
@@ -37,10 +37,10 @@ def parse_args():
     parser.add_argument("--model_type", type=str, default="vit_b", help="sam model_type")
     parser.add_argument('--thd', type=bool, default=False, help='3d or not')
     parser.add_argument('--SGDL_model_path', type=str,
-                        default="./Results/train_tumor_2_v100_semi_38_111_5_5/SGDL_best_model.pth",
+                        default="./Results/train_260513_data_label1_v100_semi_106_117_13_13/SGDL_best_model.pth",
                         help='SGDL model weight path')
     parser.add_argument('--save_dir', type=str,
-                        default="./Results/train_tumor_2_v100_semi_38_111_5_5/prediction_test",
+                        default="./Results/train_260513_data_label1_v100_semi_106_117_13_13/prediction_test",
                         help='directory to save logs and visualizations')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--num_workers', type=int, default=0)

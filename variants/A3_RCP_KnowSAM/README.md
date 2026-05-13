@@ -54,8 +54,8 @@ Useful overrides:
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
 DATA_PATH=./SampleData \
-DATASET=/tumor_1 \
-SNAPSHOT_PATH=./Results/A3_RCP_KnowSAM_V100_exp1 \
+DATASET=/260513_data_label1 \
+SNAPSHOT_PATH=./Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13 \
 BATCH_SIZE=24 \
 LABELED_BS=12 \
 bash ./variants/A3_RCP_KnowSAM/train_v100_a3_rcp.sh
@@ -64,10 +64,10 @@ bash ./variants/A3_RCP_KnowSAM/train_v100_a3_rcp.sh
 Main outputs:
 
 ```text
-Results/A3_RCP_KnowSAM/fold_0/SGDL_best_model.pth
-Results/A3_RCP_KnowSAM/fold_0/sam_best_model.pth
-Results/A3_RCP_KnowSAM/fold_0/log.txt
-Results/A3_RCP_KnowSAM/fold_0/monitor/
+Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/SGDL_best_model.pth
+Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/sam_best_model.pth
+Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/log.txt
+Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13/fold_0/monitor/
 ```
 
 ## Test
@@ -80,7 +80,7 @@ Useful overrides:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-SNAPSHOT_PATH=./Results/A3_RCP_KnowSAM_V100_exp1 \
+SNAPSHOT_PATH=./Results/A3_RCP_KnowSAM_V100_label1_106_117_13_13 \
 SPLIT=test \
 bash ./variants/A3_RCP_KnowSAM/test_v100_a3_rcp.sh
 ```

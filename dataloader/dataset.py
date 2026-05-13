@@ -18,29 +18,30 @@ class build_Dataset(Dataset):
         self.args = args
 
         if self.split == "train":
-            labeled_path = os.path.join(self.data_dir + "/labeled/image")
-            sample_list_labeled = os.listdir(labeled_path)
+            labeled_path = os.path.join(self.data_dir, "labeled", "image")
+            sample_list_labeled = sorted(os.listdir(labeled_path))
             sample_list_labeled = [os.path.join(labeled_path, item) for item in sample_list_labeled]
+            self.sample_list_labeled = sample_list_labeled
             self.sample_list = sample_list_labeled
             print("train total {} samples".format(len(self.sample_list)))
         elif self.split == "train_semi":
-            labeled_path = os.path.join(self.data_dir + "/labeled/image")
-            unlabeled_path = os.path.join(self.data_dir + "/unlabeled/image")
-            sample_list_labeled = os.listdir(labeled_path)
-            sample_list_unlabeled = os.listdir(unlabeled_path)
+            labeled_path = os.path.join(self.data_dir, "labeled", "image")
+            unlabeled_path = os.path.join(self.data_dir, "unlabeled", "image")
+            sample_list_labeled = sorted(os.listdir(labeled_path))
+            sample_list_unlabeled = sorted(os.listdir(unlabeled_path))
             self.sample_list_labeled = [os.path.join(labeled_path, item) for item in sample_list_labeled]
             self.sample_list_unlabeled = [os.path.join(unlabeled_path, item) for item in sample_list_unlabeled]
             self.sample_list = self.sample_list_labeled + self.sample_list_unlabeled
             print("train total {} labeled samples, {} unlabeled samples".
                   format(len(sample_list_labeled), len(sample_list_unlabeled)))
         elif self.split == "val":
-            val_path = os.path.join(self.data_dir + "/val/image")
-            sample_list_val = os.listdir(val_path)
+            val_path = os.path.join(self.data_dir, "val", "image")
+            sample_list_val = sorted(os.listdir(val_path))
             self.sample_list = [os.path.join(val_path, item) for item in sample_list_val]
             print("val total {} samples".format(len(self.sample_list)))
         elif self.split == "test":
-            test_path = os.path.join(self.data_dir + "/test/image")
-            sample_list_test = os.listdir(test_path)
+            test_path = os.path.join(self.data_dir, "test", "image")
+            sample_list_test = sorted(os.listdir(test_path))
             self.sample_list = [os.path.join(test_path, item) for item in sample_list_test]
             print("test total {} samples".format(len(self.sample_list)))
         elif self.split == "train_semi_list":
@@ -127,7 +128,10 @@ class build_Dataset(Dataset):
 
         if "_list" not in self.split:
             case = self.sample_list[idx]
-            image = cv2.cvtColor(cv2.imread(case), cv2.COLOR_BGR2RGB)
+            raw_image = cv2.imread(case)
+            if raw_image is None:
+                raise FileNotFoundError(f"Failed to read image: {case}")
+            image = cv2.cvtColor(raw_image, cv2.COLOR_BGR2RGB)
             ori_image = cv2.cvtColor(cv2.resize(image.copy(), (256, 256)), cv2.COLOR_RGB2BGR)
             # image = (image - self.pixel_mean) / self.pixel_std
             image = image / 255.0
@@ -137,8 +141,14 @@ class build_Dataset(Dataset):
                 # Unlabeled samples use a zero mask placeholder so training does not depend on unlabeled GT files.
                 label = np.zeros(image.shape[:2], dtype=np.float32)
             else:
-                label_path = case.replace("image", "mask")
-                label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE) / 255
+                label_path = case.replace(os.sep + "image" + os.sep, os.sep + "mask" + os.sep)
+                raw_label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE)
+                if raw_label is None:
+                    raise FileNotFoundError(f"Failed to read mask: {label_path}")
+                if getattr(self.args, "num_classes", 2) > 2:
+                    label = raw_label.astype(np.float32)
+                else:
+                    label = (raw_label > 0).astype(np.float32)
             if "val" in self.split or "test" in self.split:
                 if self.transform:
                     data = self.transform(image=image, mask=label)
@@ -155,8 +165,13 @@ class build_Dataset(Dataset):
                         image = data['image']
                         label = data['mask']
 
-            label[label < 0.5] = 0
-            label[label > 0.5] = 1
+            if getattr(self.args, "num_classes", 2) > 2:
+                label = np.rint(label)
+                label[label < 0] = 0
+                label[label >= self.args.num_classes] = 0
+            else:
+                label[label < 0.5] = 0
+                label[label > 0.5] = 1
             image = image.transpose(2, 0, 1).astype('float32')
             ori_image = ori_image.transpose(2, 0, 1).astype('float32')
             image, label = torch.tensor(image), torch.tensor(label)

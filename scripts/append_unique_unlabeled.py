@@ -16,7 +16,7 @@ def parse_args():
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("./SampleData/tumor_1"),
+        default=Path("./SampleData/260513_data_label1"),
         help="KnowSAM dataset root.",
     )
     parser.add_argument(
