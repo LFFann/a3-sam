@@ -48,9 +48,9 @@ def parse_args():
     parser.add_argument("--multimask", type=bool, default=False)
     parser.add_argument("--encoder_adapter", type=bool, default=True)
     parser.add_argument("--SGDL_model_path", type=str,
-                        default="./Results/Multiclass_KnowSAM_V100_106_117_13_13/SGDL_best_model.pth")
+                        default="./Results/Multiclass_KnowSAM_V100_bs32_10k_106_117_13_13/SGDL_best_model.pth")
     parser.add_argument("--save_dir", type=str,
-                        default="./Results/Multiclass_KnowSAM_V100_106_117_13_13/prediction_test")
+                        default="./Results/Multiclass_KnowSAM_V100_bs32_10k_106_117_13_13/prediction_test")
     parser.add_argument("--num_workers", type=int, default=0)
     return parser.parse_args()
 
@@ -122,6 +122,21 @@ def evaluate_multiclass(gt: np.ndarray, pred: np.ndarray, num_classes: int):
     return result
 
 
+def format_multiclass_metrics(metrics: dict, num_classes: int):
+    parts = [
+        "avg_dice=%.6f" % metrics["dice"],
+        "avg_iou=%.6f" % metrics["iou"],
+        "avg_hd95=%.6f" % metrics["hd95"],
+    ]
+    for class_idx in range(1, num_classes):
+        parts.extend([
+            "class_%d_dice=%.6f" % (class_idx, metrics[f"class_{class_idx}_dice"]),
+            "class_%d_iou=%.6f" % (class_idx, metrics[f"class_{class_idx}_iou"]),
+            "class_%d_hd95=%.6f" % (class_idx, metrics[f"class_{class_idx}_hd95"]),
+        ])
+    return " ".join(parts)
+
+
 def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt: np.ndarray, pred: np.ndarray):
     dirs = {
         "original": save_dir / "original",
@@ -183,7 +198,7 @@ def main():
                 "gt_class_2_pixels": int((gt == 2).sum()),
             }
             case_metrics.append(row)
-            logging.info("case=%s dice=%.6f iou=%.6f hd95=%.6f", case_name, row["dice"], row["iou"], row["hd95"])
+            logging.info("case=%s %s", case_name, format_multiclass_metrics(metrics, args.num_classes))
 
     valid = [row for row in case_metrics if not np.isnan(row["dice"])]
     summary = {
@@ -224,6 +239,20 @@ def main():
     )
 
     logging.info("Prediction summary: %s", summary)
+    logging.info(
+        "Prediction macro metrics: avg_dice=%.6f avg_iou=%.6f avg_hd95=%.6f",
+        summary["avg_dice"],
+        summary["avg_iou"],
+        summary["avg_hd95"],
+    )
+    for class_idx in range(1, args.num_classes):
+        logging.info(
+            "Prediction class_%d metrics: dice=%.6f iou=%.6f hd95=%.6f",
+            class_idx,
+            summary[f"class_{class_idx}_avg_dice"],
+            summary[f"class_{class_idx}_avg_iou"],
+            summary[f"class_{class_idx}_avg_hd95"],
+        )
     print(f"{args.split} :")
     print("avg_dice: ", summary["avg_dice"])
     print("avg_iou: ", summary["avg_iou"])

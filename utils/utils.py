@@ -7,34 +7,62 @@ import matplotlib.pyplot as plt
 from hausdorff import hausdorff_distance
 
 
+def _binary_class_metrics(true_mask, pred_mask):
+    true_mask = true_mask.astype(bool)
+    pred_mask = pred_mask.astype(bool)
+    true_sum = true_mask.sum()
+    pred_sum = pred_mask.sum()
+    if true_sum == 0 and pred_sum == 0:
+        return 1.0, 1.0, 0.0
+    if true_sum == 0 or pred_sum == 0:
+        return 0.0, 0.0, float("nan")
+    return (
+        float(metric.binary.dc(pred_mask, true_mask)),
+        float(metric.binary.jc(pred_mask, true_mask)),
+        float(hausdorff_distance(true_mask.astype(np.uint8), pred_mask.astype(np.uint8)) * 0.95),
+    )
+
+
+def multiclass_segmentation_metrics(y_true, y_pred, num_classes=None):
+    if torch.is_tensor(y_true):
+        y_true = y_true.detach().cpu().numpy()
+    if torch.is_tensor(y_pred):
+        if num_classes is None and y_pred.ndim >= 2:
+            num_classes = int(y_pred.shape[1])
+        y_pred = torch.argmax(y_pred, dim=1).detach().cpu().numpy()
+
+    y_true = np.squeeze(y_true).astype(np.int64)
+    y_pred = np.squeeze(y_pred).astype(np.int64)
+    if num_classes is None:
+        num_classes = int(max(np.max(y_true), np.max(y_pred)) + 1)
+
+    result = {}
+    rows = []
+    for class_idx in range(1, num_classes):
+        dice, iou, hd95 = _binary_class_metrics(y_true == class_idx, y_pred == class_idx)
+        result[f"class_{class_idx}_dice"] = dice
+        result[f"class_{class_idx}_iou"] = iou
+        result[f"class_{class_idx}_hd95"] = hd95
+        rows.append((dice, iou, hd95))
+
+    if rows:
+        metrics_array = np.array(rows, dtype=np.float32)
+        result["avg_dice"] = float(np.nanmean(metrics_array[:, 0]))
+        result["avg_iou"] = float(np.nanmean(metrics_array[:, 1]))
+        result["avg_hd95"] = float(np.nanmean(metrics_array[:, 2]))
+    else:
+        result["avg_dice"] = 0.0
+        result["avg_iou"] = 0.0
+        result["avg_hd95"] = float("nan")
+    return result
+
 
 
 
 def eval(y_true, y_pred, thr=0.5, epsilon=0.001):
     if y_pred.shape[1] > 2:
-        num_classes = y_pred.shape[1]
-        y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
-        y_pred = torch.argmax(y_pred, dim=1).to(torch.float32).squeeze(0).cpu().detach().numpy()
-        class_metrics = []
-        for class_idx in range(1, num_classes):
-            pred = y_pred == class_idx
-            true = y_true == class_idx
-            pred_sum = pred.sum()
-            true_sum = true.sum()
-            if pred_sum == 0 and true_sum == 0:
-                class_metrics.append((1.0, 1.0, 0.0))
-            elif pred_sum == 0 or true_sum == 0:
-                class_metrics.append((0.0, 0.0, float("nan")))
-            else:
-                class_metrics.append((
-                    metric.binary.dc(pred, true),
-                    metric.binary.jc(pred, true),
-                    hausdorff_distance(true.astype(np.uint8), pred.astype(np.uint8)) * 0.95,
-                ))
-        if not class_metrics:
-            return 0.0, 0.0, float("nan")
-        metrics_array = np.array(class_metrics, dtype=np.float32)
-        return [float(np.nanmean(metrics_array[:, i])) for i in range(3)]
+        result = multiclass_segmentation_metrics(y_true, y_pred, num_classes=y_pred.shape[1])
+        return result["avg_dice"], result["avg_iou"], result["avg_hd95"]
     elif y_pred.shape[1] == 1:
         y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
         y_pred = (y_pred > thr).to(torch.float32).squeeze(0).squeeze(0).cpu().detach().numpy()
@@ -51,16 +79,7 @@ def eval(y_true, y_pred, thr=0.5, epsilon=0.001):
 
 def dice_coef(y_true, y_pred, thr=0.5, epsilon=0.001):
     if y_pred.shape[1] > 2:
-        num_classes = y_pred.shape[1]
-        y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
-        y_pred = torch.argmax(y_pred, dim=1).to(torch.float32).squeeze(0).cpu().detach().numpy()
-        dice_scores = []
-        for class_idx in range(1, num_classes):
-            pred = y_pred == class_idx
-            true = y_true == class_idx
-            den = true.sum() + pred.sum()
-            dice_scores.append(((2 * (true * pred).sum()) / (den + epsilon)) if den > 0 else 1.0)
-        return float(np.mean(dice_scores)) if dice_scores else 0.0
+        return multiclass_segmentation_metrics(y_true, y_pred, num_classes=y_pred.shape[1])["avg_dice"]
     elif y_pred.shape[1] > 1:
         y_true = y_true.to(torch.float32).squeeze(0).cpu().detach().numpy()
         y_pred = (y_pred > thr).to(torch.float32).squeeze(0)[1].cpu().detach().numpy()

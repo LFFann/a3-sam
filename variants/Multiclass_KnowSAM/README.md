@@ -31,10 +31,17 @@ Useful overrides:
 
 ```bash
 CUDA_VISIBLE_DEVICES=0 \
-BATCH_SIZE=12 \
-LABELED_BS=6 \
+BATCH_SIZE=32 \
+LABELED_BS=16 \
 bash ./variants/Multiclass_KnowSAM/train_v100_multiclass.sh
 ```
+
+The default V100 profile uses `BATCH_SIZE=32`, `LABELED_BS=16`,
+`MAX_ITERATIONS=10000`, and `MIXED_ITERATIONS=1000`. Keep
+`BATCH_SIZE - LABELED_BS >= LABELED_BS`; the mixup path assumes the unlabeled
+half is at least as large as the labeled half. If memory is still underused,
+try `BATCH_SIZE=40 LABELED_BS=20`. If CUDA OOM occurs, fall back to
+`BATCH_SIZE=24 LABELED_BS=12`.
 
 ## Test
 
@@ -44,3 +51,14 @@ bash ./variants/Multiclass_KnowSAM/test_v100_multiclass.sh
 
 The prediction script reports macro-average Dice, IoU, and HD95 over foreground
 classes 1 and 2, and also writes per-class metrics.
+
+Metrics are computed as follows:
+
+```text
+class_k Dice/IoU/HD95 = metric(pred == k, gt == k), for k in {1, 2}
+avg Dice/IoU/HD95 = macro-average over foreground classes 1 and 2
+```
+
+Validation logs include per-class and average metrics for SAM, SGDL, UNet, and
+VNet. Test logs include per-case per-class metrics and final per-class summary
+metrics for SGDL.

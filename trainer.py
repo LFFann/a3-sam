@@ -6,7 +6,7 @@ from Model.sam.build_sam import sam_model_registry
 import torch.optim as optim
 from utils.losses import dice_loss, loss_diff1, loss_diff2, KDLoss, DiceLoss
 import logging
-from utils.utils import dice_coef
+from utils.utils import dice_coef, multiclass_segmentation_metrics
 
 import numpy as np
 
@@ -121,12 +121,12 @@ class Trainer(nn.Module):
 
         fusion_map_soft_mix = torch.softmax(fusion_map_mix, dim=1)
         UNet_sup_mixed_loss = ce_loss(pred_UNet_mix, label_batch_mix.long()) + self.dice_loss(pred_UNet_soft_mix, label_batch_mix)
-        UNet_enp_mixed_loss = self.entropy_loss(pred_UNet_soft_mix, C=2)
+        UNet_enp_mixed_loss = self.entropy_loss(pred_UNet_soft_mix, C=self.args.num_classes)
         UNet_cons_mixed_loss = loss_diff1(pred_UNet_soft_mix, pred_VNet_soft_mix.clone().detach())
         UNet_unsup_mixed_loss = ce_loss(pred_UNet_mix[self.args.labeled_bs:], pseudo_label_mix[self.args.labeled_bs:].long()) + self.dice_loss(pred_UNet_soft_mix[self.args.labeled_bs:], pseudo_label_mix[self.args.labeled_bs:])
 
         VNet_sup_mixed_loss = ce_loss(pred_VNet_mix, label_batch_mix.long()) + self.dice_loss(pred_VNet_soft_mix, label_batch_mix)
-        VNet_enp_mixed_loss = self.entropy_loss(pred_VNet_soft_mix, C=2)
+        VNet_enp_mixed_loss = self.entropy_loss(pred_VNet_soft_mix, C=self.args.num_classes)
         VNet_cons_mixed_loss = loss_diff2(pred_VNet_soft_mix, pred_UNet_soft_mix.clone().detach())
         VNet_unsup_mixed_loss = ce_loss(pred_VNet_mix[self.args.labeled_bs:], pseudo_label_mix[self.args.labeled_bs:].long()) + self.dice_loss(pred_VNet_soft_mix[self.args.labeled_bs:], pseudo_label_mix[self.args.labeled_bs:])
 
@@ -172,12 +172,12 @@ class Trainer(nn.Module):
         
         UNet_sup_loss = ce_loss(pred_UNet[:self.args.labeled_bs], label_batch[:self.args.labeled_bs].long()) + self.dice_loss(pred_UNet_soft[:self.args.labeled_bs], label_batch[:self.args.labeled_bs])
         UNet_cons_loss = loss_diff1(pred_UNet_soft, pred_VNet_soft.clone().detach())
-        UNet_enp_loss = self.entropy_loss(pred_UNet_soft, C=2)
+        UNet_enp_loss = self.entropy_loss(pred_UNet_soft, C=self.args.num_classes)
         UNet_kd_loss = self.KDLoss(pred_UNet.permute(0, 2, 3, 1).reshape(-1, 2), pred_sam.clone().detach().permute(0, 2, 3, 1).reshape(-1, 2))
 
         VNet_sup_loss = ce_loss(pred_VNet[:self.args.labeled_bs], label_batch[:self.args.labeled_bs].long()) + self.dice_loss(pred_VNet_soft[:self.args.labeled_bs], label_batch[:self.args.labeled_bs])
         VNet_cons_loss = loss_diff2(pred_VNet_soft, pred_UNet_soft.clone().detach())
-        VNet_enp_loss = self.entropy_loss(pred_VNet_soft, C=2)
+        VNet_enp_loss = self.entropy_loss(pred_VNet_soft, C=self.args.num_classes)
         VNet_kd_loss = self.KDLoss(pred_VNet.permute(0, 2, 3, 1).reshape(-1, 2), pred_sam.clone().detach().permute(0, 2, 3, 1).reshape(-1, 2))
 
         sam_sup_loss = ce_loss(pred_sam[:self.args.labeled_bs], label_batch[:self.args.labeled_bs].long()) + self.dice_loss(pred_sam_soft[:self.args.labeled_bs], label_batch[:self.args.labeled_bs])
@@ -233,6 +233,12 @@ class Trainer(nn.Module):
         avg_dice_SGDL = 0.0
         avg_dice_unet = 0.0
         avg_dice_vnet = 0.0
+        multiclass_records = {
+            "sam": [],
+            "SGDL": [],
+            "unet": [],
+            "vnet": [],
+        }
 
         for i_batch, sampled_batch in enumerate(val_loader):
             val_image, val_label = sampled_batch["image"].cuda(), sampled_batch["label"].cuda()
@@ -261,16 +267,36 @@ class Trainer(nn.Module):
                     low_res_masks_all = torch.cat((low_res_masks_all, low_res_masks), dim=1)
             pred_sam = F.interpolate(low_res_masks_all, size=(self.args.image_size, self.args.image_size))
             pred_sam_soft = torch.softmax(pred_sam, dim=1)
-            dice_sam = dice_coef(val_label, pred_sam_soft, thr=0.5)
+            if self.args.num_classes > 2:
+                sam_metrics = multiclass_segmentation_metrics(val_label, pred_sam_soft, self.args.num_classes)
+                dice_sam = sam_metrics["avg_dice"]
+                multiclass_records["sam"].append(sam_metrics)
+            else:
+                dice_sam = dice_coef(val_label, pred_sam_soft, thr=0.5)
             avg_dice_sam += dice_sam
 
             fusion_map_soft = torch.softmax(fusion_map, dim=1)
-            dice_SGDL = dice_coef(val_label, fusion_map_soft, thr=0.5)
+            if self.args.num_classes > 2:
+                sgdl_metrics = multiclass_segmentation_metrics(val_label, fusion_map_soft, self.args.num_classes)
+                dice_SGDL = sgdl_metrics["avg_dice"]
+                multiclass_records["SGDL"].append(sgdl_metrics)
+            else:
+                dice_SGDL = dice_coef(val_label, fusion_map_soft, thr=0.5)
             avg_dice_SGDL += dice_SGDL
 
-            dice_unet = dice_coef(val_label, pred_UNet_soft, thr=0.5)
+            if self.args.num_classes > 2:
+                unet_metrics = multiclass_segmentation_metrics(val_label, pred_UNet_soft, self.args.num_classes)
+                dice_unet = unet_metrics["avg_dice"]
+                multiclass_records["unet"].append(unet_metrics)
+            else:
+                dice_unet = dice_coef(val_label, pred_UNet_soft, thr=0.5)
             avg_dice_unet += dice_unet
-            dice_vnet = dice_coef(val_label, pred_VNet_soft, thr=0.5)
+            if self.args.num_classes > 2:
+                vnet_metrics = multiclass_segmentation_metrics(val_label, pred_VNet_soft, self.args.num_classes)
+                dice_vnet = vnet_metrics["avg_dice"]
+                multiclass_records["vnet"].append(vnet_metrics)
+            else:
+                dice_vnet = dice_coef(val_label, pred_VNet_soft, thr=0.5)
             avg_dice_vnet += dice_vnet
 
         avg_dice_sam = avg_dice_sam / len(val_loader)
@@ -284,6 +310,32 @@ class Trainer(nn.Module):
                      '  unet_mean_dice : %f '
                      '  vnet_mean_dice : %f '
                     % (iter_num, avg_dice_sam, avg_dice_SGDL, avg_dice_unet, avg_dice_vnet))
+        if self.args.num_classes > 2:
+            for model_name, records in multiclass_records.items():
+                if not records:
+                    continue
+                avg_record = {
+                    key: float(np.nanmean([record[key] for record in records]))
+                    for key in records[0].keys()
+                }
+                class_parts = []
+                for class_idx in range(1, self.args.num_classes):
+                    class_parts.append(
+                        "class_%d_dice=%.6f class_%d_iou=%.6f class_%d_hd95=%.6f" % (
+                            class_idx, avg_record[f"class_{class_idx}_dice"],
+                            class_idx, avg_record[f"class_{class_idx}_iou"],
+                            class_idx, avg_record[f"class_{class_idx}_hd95"],
+                        )
+                    )
+                logging.info(
+                    "iteration %d : %s_multiclass_val avg_dice=%.6f avg_iou=%.6f avg_hd95=%.6f %s",
+                    iter_num,
+                    model_name,
+                    avg_record["avg_dice"],
+                    avg_record["avg_iou"],
+                    avg_record["avg_hd95"],
+                    " ".join(class_parts),
+                )
 
         if avg_dice_sam > self.best_performance_sam:
             self.best_performance_sam = avg_dice_sam
