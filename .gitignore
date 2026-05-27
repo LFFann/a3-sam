@@ -40,6 +40,12 @@ SampleData/
 doc/related_papers_for_comparison/
 doc/related_repositories_for_comparison/
 
+# Local research notes and downloaded paper materials
+idea/
+papers/
+doc/优化.md
+doc/report_assets/ra_sam_ssl_*.svg
+
 # OS and editor files
 .DS_Store
 Thumbs.db
