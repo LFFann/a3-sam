@@ -21,6 +21,12 @@ if REPO_ROOT not in sys.path:
 from dataloader.dataset import build_Dataset
 from dataloader.transforms import build_transforms
 from state_modules import A3PASSNet
+from utils.lateral_fissure_measurement import (
+    annotate_lateral_fissure_measurement,
+    measure_lateral_fissure,
+    measurement_to_row,
+    parse_pixel_spacing,
+)
 from utils.training_monitor import save_evaluation_artifacts
 from utils.utils import multiclass_segmentation_metrics
 
@@ -56,6 +62,12 @@ def parse_args():
     parser.add_argument("--pass_state_dim", type=int, default=64)
     parser.add_argument("--pass_base_channels", type=int, default=32)
     parser.add_argument("--pass_state_lr", type=float, default=0.001)
+    parser.add_argument("--measurement_class", type=int, default=1,
+                        help="class index used for lateral fissure measurement")
+    parser.add_argument("--pixel_spacing", type=str, default="",
+                        help="optional pixel spacing in mm, either one value or row,col")
+    parser.add_argument("--disable_measurement", action="store_true",
+                        help="disable lateral fissure width/depth measurement outputs")
     return parser.parse_args()
 
 
@@ -144,7 +156,9 @@ def format_metrics(prefix, metrics, num_classes):
 
 
 def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_mask: np.ndarray,
-                      pass_mask: np.ndarray, sgdl_mask: np.ndarray):
+                      pass_mask: np.ndarray, sgdl_mask: np.ndarray,
+                      measurement_overlay_pass: np.ndarray = None,
+                      measurement_overlay_sgdl: np.ndarray = None):
     dirs = {
         "original": save_dir / "original",
         "gt_mask": save_dir / "gt_mask",
@@ -156,6 +170,10 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_
         "overlay_pass": save_dir / "overlay_pass",
         "overlay_sgdl": save_dir / "overlay_sgdl",
     }
+    if measurement_overlay_pass is not None:
+        dirs["measurement_overlay_pass"] = save_dir / "measurement_overlay_pass"
+    if measurement_overlay_sgdl is not None:
+        dirs["measurement_overlay_sgdl"] = save_dir / "measurement_overlay_sgdl"
     for directory in dirs.values():
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -168,6 +186,29 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_
     cv2.imwrite(str(dirs["pred_color_sgdl"] / case_name), colorize_mask(sgdl_mask))
     cv2.imwrite(str(dirs["overlay_pass"] / case_name), overlay_multiclass(ori_image, pass_mask))
     cv2.imwrite(str(dirs["overlay_sgdl"] / case_name), overlay_multiclass(ori_image, sgdl_mask))
+    if measurement_overlay_pass is not None:
+        cv2.imwrite(str(dirs["measurement_overlay_pass"] / case_name), measurement_overlay_pass)
+    if measurement_overlay_sgdl is not None:
+        cv2.imwrite(str(dirs["measurement_overlay_sgdl"] / case_name), measurement_overlay_sgdl)
+
+
+def add_measurement_summary(summary: dict, case_metrics: list[dict], prefix: str):
+    status_key = f"{prefix}_measurement_status"
+    width_key = f"{prefix}_width_px"
+    depth_key = f"{prefix}_depth_px"
+    mean_width_key = f"{prefix}_mean_width_px"
+    measurable = [item for item in case_metrics if item.get(status_key) == "ok"]
+    summary[f"num_measurable_{prefix}s"] = len(measurable)
+    summary[f"avg_{prefix}_width_px"] = float(np.mean([item[width_key] for item in measurable])) if measurable else float("nan")
+    summary[f"avg_{prefix}_depth_px"] = float(np.mean([item[depth_key] for item in measurable])) if measurable else float("nan")
+    summary[f"avg_{prefix}_mean_width_px"] = float(np.mean([item[mean_width_key] for item in measurable])) if measurable else float("nan")
+    mm_width_key = f"{prefix}_width_mm"
+    if measurable and mm_width_key in measurable[0]:
+        mm_depth_key = f"{prefix}_depth_mm"
+        mm_mean_width_key = f"{prefix}_mean_width_mm"
+        summary[f"avg_{prefix}_width_mm"] = float(np.mean([item[mm_width_key] for item in measurable]))
+        summary[f"avg_{prefix}_depth_mm"] = float(np.mean([item[mm_depth_key] for item in measurable]))
+        summary[f"avg_{prefix}_mean_width_mm"] = float(np.mean([item[mm_mean_width_key] for item in measurable]))
 
 
 def main():
@@ -175,6 +216,7 @@ def main():
     save_dir = Path(args.save_dir)
     log_path = setup_logger(save_dir)
     logging.info("Prediction arguments: %s", args)
+    pixel_spacing = parse_pixel_spacing(args.pixel_spacing)
 
     data_transforms = build_transforms(args)
     test_dataset = build_Dataset(
@@ -207,7 +249,39 @@ def main():
             sgdl_mask = label_from_softmax(out["fusion_soft"])
             gt_mask = test_label.squeeze(0).detach().cpu().numpy().astype(np.uint8)
 
-            save_case_outputs(save_dir, case_name, ori_image, gt_mask, pass_mask, sgdl_mask)
+            measurement_row = {}
+            measurement_overlay_pass = None
+            measurement_overlay_sgdl = None
+            if not args.disable_measurement:
+                pass_fissure_mask = (pass_mask == args.measurement_class).astype(np.uint8)
+                sgdl_fissure_mask = (sgdl_mask == args.measurement_class).astype(np.uint8)
+                pass_measurement = measure_lateral_fissure(pass_fissure_mask, pixel_spacing=pixel_spacing)
+                sgdl_measurement = measure_lateral_fissure(sgdl_fissure_mask, pixel_spacing=pixel_spacing)
+                measurement_row.update(measurement_to_row(pass_measurement, prefix="fissure"))
+                measurement_row.update(measurement_to_row(sgdl_measurement, prefix="sgdl_fissure"))
+                measurement_overlay_pass = annotate_lateral_fissure_measurement(
+                    ori_image,
+                    pass_fissure_mask,
+                    measurement=pass_measurement,
+                    pixel_spacing=pixel_spacing,
+                )
+                measurement_overlay_sgdl = annotate_lateral_fissure_measurement(
+                    ori_image,
+                    sgdl_fissure_mask,
+                    measurement=sgdl_measurement,
+                    pixel_spacing=pixel_spacing,
+                )
+
+            save_case_outputs(
+                save_dir,
+                case_name,
+                ori_image,
+                gt_mask,
+                pass_mask,
+                sgdl_mask,
+                measurement_overlay_pass,
+                measurement_overlay_sgdl,
+            )
 
             case_info = {
                 "index": i_batch,
@@ -217,6 +291,7 @@ def main():
                 "hd95": pass_metrics["avg_hd95"],
                 **prefixed_metrics("pass", pass_metrics),
                 **prefixed_metrics("sgdl", sgdl_metrics),
+                **measurement_row,
             }
             for class_idx in range(1, args.num_classes):
                 case_info[f"pass_pred_class_{class_idx}_pixels"] = int((pass_mask == class_idx).sum())
@@ -249,6 +324,10 @@ def main():
             for metric_name in ("dice", "iou", "hd95"):
                 key = f"{prefix}_class_{class_idx}_{metric_name}"
                 summary[f"{key}_avg"] = float(np.nanmean([item[key] for item in case_metrics])) if case_metrics else float("nan")
+    if not args.disable_measurement:
+        summary["measurement_class"] = args.measurement_class
+        add_measurement_summary(summary, case_metrics, "fissure")
+        add_measurement_summary(summary, case_metrics, "sgdl_fissure")
 
     csv_path = save_dir / "case_metrics.csv"
     fieldnames = list(case_metrics[0].keys()) if case_metrics else [
