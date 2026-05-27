@@ -13,6 +13,12 @@ from torch.utils.data import DataLoader
 from dataloader.dataset import build_Dataset
 from dataloader.transforms import build_transforms
 from Model.model import KnowSAM
+from utils.lateral_fissure_measurement import (
+    annotate_lateral_fissure_measurement,
+    measure_lateral_fissure,
+    measurement_to_row,
+    parse_pixel_spacing,
+)
 from utils.training_monitor import save_evaluation_artifacts
 from utils.utils import eval
 
@@ -44,6 +50,10 @@ def parse_args():
                         help='directory to save logs and visualizations')
     parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--num_workers', type=int, default=0)
+    parser.add_argument('--pixel_spacing', type=str, default='',
+                        help='optional pixel spacing in mm, either one value or row,col')
+    parser.add_argument('--disable_measurement', action='store_true',
+                        help='disable lateral fissure width/depth measurement outputs')
     return parser.parse_args()
 
 
@@ -93,12 +103,16 @@ def safe_eval(test_label, fusion_map_soft):
 
 
 def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_mask: np.ndarray,
-                      pred_mask: np.ndarray):
+                      pred_mask: np.ndarray, measurement_overlay: np.ndarray = None):
     original_dir = save_dir / "original"
     gt_dir = save_dir / "gt_mask"
     pred_dir = save_dir / "pred_mask"
     overlay_dir = save_dir / "overlay"
-    for directory in (original_dir, gt_dir, pred_dir, overlay_dir):
+    measurement_dir = save_dir / "measurement_overlay"
+    directories = [original_dir, gt_dir, pred_dir, overlay_dir]
+    if measurement_overlay is not None:
+        directories.append(measurement_dir)
+    for directory in directories:
         directory.mkdir(parents=True, exist_ok=True)
 
     pred_overlay = overlay_mask(ori_image, pred_mask, color=(0, 0, 255))
@@ -107,6 +121,8 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_
     cv2.imwrite(str(gt_dir / case_name), gt_mask)
     cv2.imwrite(str(pred_dir / case_name), pred_mask)
     cv2.imwrite(str(overlay_dir / case_name), pred_overlay)
+    if measurement_overlay is not None:
+        cv2.imwrite(str(measurement_dir / case_name), measurement_overlay)
 
 
 def main():
@@ -114,6 +130,7 @@ def main():
     save_dir = Path(args.save_dir)
     log_path = setup_logger(save_dir)
     logging.info("Prediction arguments: %s", args)
+    pixel_spacing = parse_pixel_spacing(args.pixel_spacing)
 
     data_transforms = build_transforms(args)
     test_dataset = build_Dataset(args, data_dir=args.data_path + args.dataset, split=args.split,
@@ -142,7 +159,20 @@ def main():
             pred_mask = binary_mask_from_softmax(fusion_map_soft)
             gt_mask = (test_label.squeeze(0).detach().cpu().numpy() * 255).astype(np.uint8)
 
-            save_case_outputs(save_dir, case_name, ori_image, gt_mask, pred_mask)
+            measurement = None
+            measurement_row = {}
+            measurement_overlay = None
+            if not args.disable_measurement:
+                measurement = measure_lateral_fissure(pred_mask, pixel_spacing=pixel_spacing)
+                measurement_row = measurement_to_row(measurement)
+                measurement_overlay = annotate_lateral_fissure_measurement(
+                    ori_image,
+                    pred_mask,
+                    measurement=measurement,
+                    pixel_spacing=pixel_spacing,
+                )
+
+            save_case_outputs(save_dir, case_name, ori_image, gt_mask, pred_mask, measurement_overlay)
 
             case_info = {
                 "index": i_batch,
@@ -152,12 +182,15 @@ def main():
                 "hd95": hd95,
                 "pred_positive_pixels": int((pred_mask > 0).sum()),
                 "gt_positive_pixels": int((gt_mask > 0).sum()),
+                **measurement_row,
             }
             case_metrics.append(case_info)
             logging.info(
-                "case=%s idx=%d dice=%.6f iou=%.6f hd95=%.6f pred_pixels=%d gt_pixels=%d",
+                "case=%s idx=%d dice=%.6f iou=%.6f hd95=%.6f pred_pixels=%d gt_pixels=%d fissure_width_px=%s fissure_depth_px=%s",
                 case_name, i_batch, dice, iou, hd95,
-                case_info["pred_positive_pixels"], case_info["gt_positive_pixels"]
+                case_info["pred_positive_pixels"], case_info["gt_positive_pixels"],
+                case_info.get("fissure_width_px", ""),
+                case_info.get("fissure_depth_px", ""),
             )
 
     valid_metrics = [item for item in case_metrics if not np.isnan(item["dice"])]
@@ -171,6 +204,20 @@ def main():
         "avg_iou": float(np.mean([item["iou"] for item in valid_metrics])) if valid_metrics else float("nan"),
         "avg_hd95": float(np.mean([item["hd95"] for item in valid_metrics])) if valid_metrics else float("nan"),
     }
+    if not args.disable_measurement:
+        measurable = [item for item in case_metrics if item.get("fissure_measurement_status") == "ok"]
+        summary.update({
+            "num_measurable_fissures": len(measurable),
+            "avg_fissure_width_px": float(np.mean([item["fissure_width_px"] for item in measurable])) if measurable else float("nan"),
+            "avg_fissure_depth_px": float(np.mean([item["fissure_depth_px"] for item in measurable])) if measurable else float("nan"),
+            "avg_fissure_mean_width_px": float(np.mean([item["fissure_mean_width_px"] for item in measurable])) if measurable else float("nan"),
+        })
+        if measurable and "fissure_width_mm" in measurable[0]:
+            summary.update({
+                "avg_fissure_width_mm": float(np.mean([item["fissure_width_mm"] for item in measurable])),
+                "avg_fissure_depth_mm": float(np.mean([item["fissure_depth_mm"] for item in measurable])),
+                "avg_fissure_mean_width_mm": float(np.mean([item["fissure_mean_width_mm"] for item in measurable])),
+            })
 
     csv_path = save_dir / "case_metrics.csv"
     with open(csv_path, "w", newline="", encoding="utf-8") as csv_file:

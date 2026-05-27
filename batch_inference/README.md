@@ -20,6 +20,7 @@ patient_001/
   A3_001_pred_mask.png
   A3_001_pred_color.png
   A3_001_overlay.png
+  A3_001_measurement.png
 ```
 
 Run KnowSAM/SGDL inference:
@@ -53,4 +54,13 @@ Useful options:
 - `--include-keyword A3`: only process filenames containing `A3`.
 - `--device cpu` or `--device cuda:0`: override automatic device selection.
 - `--save-prob`: also save foreground probability PNG files.
-- `--overwrite`: overwrite existing `*_pred_mask.png` and `*_overlay.png`.
+- `--pixel-spacing 0.12` or `--pixel-spacing 0.12,0.12`: also report width/depth in mm.
+- `--disable-measurement`: skip fissure width/depth measurement and `*_measurement.png`.
+- `--overwrite`: overwrite existing `*_pred_mask.png`, `*_overlay.png`, and `*_measurement.png`.
+
+The measurement overlay draws dashed lines for:
+
+- `width`: local fissure thickness at the thickest skeleton point.
+- `depth`: the main-axis extension length of the predicted fissure component.
+
+Numeric fields are written to `batch_inference_summary.csv` as `fissure_width_px`, `fissure_depth_px`, `fissure_mean_width_px`, and mm fields when pixel spacing is provided.

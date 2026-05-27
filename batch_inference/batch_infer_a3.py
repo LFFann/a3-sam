@@ -17,6 +17,12 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from Model.model import KnowSAM
+from utils.lateral_fissure_measurement import (
+    annotate_lateral_fissure_measurement,
+    measure_lateral_fissure,
+    measurement_to_row,
+    parse_pixel_spacing,
+)
 
 
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff")
@@ -24,6 +30,7 @@ GENERATED_SUFFIXES = (
     "_pred_mask",
     "_pred_color",
     "_overlay",
+    "_measurement",
     "_prob_class",
 )
 
@@ -88,6 +95,16 @@ def parse_args():
         "--overwrite",
         action="store_true",
         help="Overwrite existing mask/overlay outputs.",
+    )
+    parser.add_argument(
+        "--pixel-spacing",
+        default="",
+        help="Optional pixel spacing in mm, either one value or row,col.",
+    )
+    parser.add_argument(
+        "--disable-measurement",
+        action="store_true",
+        help="Disable lateral fissure width/depth measurement outputs.",
     )
     parser.add_argument("--pass-state-size", type=int, default=64)
     parser.add_argument("--pass-state-dim", type=int, default=64)
@@ -281,6 +298,7 @@ def output_paths(image_path: Path, out_dir: Path):
         "mask": out_dir / f"{image_path.stem}_pred_mask.png",
         "color": out_dir / f"{image_path.stem}_pred_color.png",
         "overlay": out_dir / f"{image_path.stem}_overlay.png",
+        "measurement": out_dir / f"{image_path.stem}_measurement.png",
     }
 
 
@@ -294,6 +312,7 @@ def main():
     summary_dir = output_root if output_root else input_root
     log_path = setup_logger(summary_dir)
     device = resolve_device(args.device)
+    pixel_spacing = parse_pixel_spacing(args.pixel_spacing)
 
     logging.info("Input root: %s", input_root)
     logging.info("Output root: %s", output_root if output_root else "same folder as each image")
@@ -316,13 +335,23 @@ def main():
             out_dir = output_dir_for_image(image_path, input_root, output_root)
             paths = output_paths(image_path, out_dir)
 
-            if not args.overwrite and paths["mask"].exists() and paths["overlay"].exists():
+            expected_outputs = [paths["mask"], paths["overlay"]]
+            if not args.disable_measurement:
+                expected_outputs.append(paths["measurement"])
+            if not args.overwrite and all(path.exists() for path in expected_outputs):
                 logging.info("[%d/%d] skip existing: %s", index, len(image_paths), image_path)
                 rows.append({
                     "image_path": str(image_path),
                     "output_dir": str(out_dir),
                     "status": "skipped_existing",
                     "positive_pixels": "",
+                    "fissure_measurement_status": "",
+                    "fissure_component_count": "",
+                    "fissure_area_px": "",
+                    "fissure_depth_px": "",
+                    "fissure_width_px": "",
+                    "fissure_mean_width_px": "",
+                    "fissure_orientation_deg": "",
                 })
                 continue
 
@@ -338,6 +367,18 @@ def main():
             imwrite_unicode(paths["color"], colorize_mask(mask))
             imwrite_unicode(paths["overlay"], overlay_mask(image_bgr, mask))
 
+            measurement_row = {}
+            if not args.disable_measurement:
+                measurement = measure_lateral_fissure(mask, pixel_spacing=pixel_spacing)
+                measurement_row = measurement_to_row(measurement)
+                measurement_overlay = annotate_lateral_fissure_measurement(
+                    image_bgr,
+                    mask,
+                    measurement=measurement,
+                    pixel_spacing=pixel_spacing,
+                )
+                imwrite_unicode(paths["measurement"], measurement_overlay)
+
             if args.save_prob:
                 for class_idx, prob_uint8 in prob_outputs.items():
                     prob_path = out_dir / f"{image_path.stem}_prob_class{class_idx}.png"
@@ -349,18 +390,24 @@ def main():
                 "output_dir": str(out_dir),
                 "status": "ok",
                 "positive_pixels": positive_pixels,
+                **measurement_row,
             })
             logging.info(
-                "[%d/%d] saved mask/overlay for %s positive_pixels=%d",
+                "[%d/%d] saved mask/overlay for %s positive_pixels=%d fissure_width_px=%s fissure_depth_px=%s",
                 index,
                 len(image_paths),
                 image_path,
                 positive_pixels,
+                measurement_row.get("fissure_width_px", ""),
+                measurement_row.get("fissure_depth_px", ""),
             )
 
     summary_path = summary_dir / "batch_inference_summary.csv"
     with open(summary_path, "w", newline="", encoding="utf-8-sig") as csv_file:
-        writer = csv.DictWriter(csv_file, fieldnames=["image_path", "output_dir", "status", "positive_pixels"])
+        fieldnames = sorted({key for row in rows for key in row.keys()})
+        ordered = ["image_path", "output_dir", "status", "positive_pixels"]
+        fieldnames = ordered + [key for key in fieldnames if key not in ordered]
+        writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(rows)
 

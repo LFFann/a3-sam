@@ -21,6 +21,12 @@ if REPO_ROOT not in sys.path:
 from dataloader.dataset import build_Dataset
 from dataloader.transforms import build_transforms
 from Model.model import KnowSAM
+from utils.lateral_fissure_measurement import (
+    annotate_lateral_fissure_measurement,
+    measure_lateral_fissure,
+    measurement_to_row,
+    parse_pixel_spacing,
+)
 from utils.training_monitor import save_evaluation_artifacts
 
 
@@ -52,6 +58,12 @@ def parse_args():
     parser.add_argument("--save_dir", type=str,
                         default="./Results/Multiclass_KnowSAM_V100_bs32_10k_106_117_13_13/prediction_test")
     parser.add_argument("--num_workers", type=int, default=0)
+    parser.add_argument("--measurement_class", type=int, default=1,
+                        help="class index used for lateral fissure measurement")
+    parser.add_argument("--pixel_spacing", type=str, default="",
+                        help="optional pixel spacing in mm, either one value or row,col")
+    parser.add_argument("--disable_measurement", action="store_true",
+                        help="disable lateral fissure width/depth measurement outputs")
     return parser.parse_args()
 
 
@@ -137,7 +149,14 @@ def format_multiclass_metrics(metrics: dict, num_classes: int):
     return " ".join(parts)
 
 
-def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt: np.ndarray, pred: np.ndarray):
+def save_case_outputs(
+    save_dir: Path,
+    case_name: str,
+    ori_image: np.ndarray,
+    gt: np.ndarray,
+    pred: np.ndarray,
+    measurement_overlay: np.ndarray = None,
+):
     dirs = {
         "original": save_dir / "original",
         "gt_mask": save_dir / "gt_mask",
@@ -146,6 +165,8 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt:
         "pred_color": save_dir / "pred_color",
         "overlay": save_dir / "overlay",
     }
+    if measurement_overlay is not None:
+        dirs["measurement_overlay"] = save_dir / "measurement_overlay"
     for path in dirs.values():
         path.mkdir(parents=True, exist_ok=True)
 
@@ -155,6 +176,8 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt:
     cv2.imwrite(str(dirs["gt_color"] / case_name), colorize_mask(gt))
     cv2.imwrite(str(dirs["pred_color"] / case_name), colorize_mask(pred))
     cv2.imwrite(str(dirs["overlay"] / case_name), overlay_multiclass(ori_image, pred))
+    if measurement_overlay is not None:
+        cv2.imwrite(str(dirs["measurement_overlay"] / case_name), measurement_overlay)
 
 
 def main():
@@ -162,6 +185,7 @@ def main():
     save_dir = Path(args.save_dir)
     log_path = setup_logger(save_dir)
     logging.info("Prediction arguments: %s", args)
+    pixel_spacing = parse_pixel_spacing(args.pixel_spacing)
 
     transforms = build_transforms(args)
     test_dataset = build_Dataset(args, data_dir=args.data_path + args.dataset, split=args.split,
@@ -186,7 +210,19 @@ def main():
             pred = torch.argmax(torch.softmax(fusion_map, dim=1), dim=1).squeeze(0).cpu().numpy().astype(np.uint8)
             gt = label.squeeze(0).cpu().numpy().astype(np.uint8)
             metrics = evaluate_multiclass(gt, pred, args.num_classes)
-            save_case_outputs(save_dir, case_name, ori_image, gt, pred)
+            measurement_row = {}
+            measurement_overlay = None
+            if not args.disable_measurement:
+                fissure_mask = (pred == args.measurement_class).astype(np.uint8)
+                measurement = measure_lateral_fissure(fissure_mask, pixel_spacing=pixel_spacing)
+                measurement_row = measurement_to_row(measurement)
+                measurement_overlay = annotate_lateral_fissure_measurement(
+                    ori_image,
+                    fissure_mask,
+                    measurement=measurement,
+                    pixel_spacing=pixel_spacing,
+                )
+            save_case_outputs(save_dir, case_name, ori_image, gt, pred, measurement_overlay)
 
             row = {
                 "index": index,
@@ -196,6 +232,7 @@ def main():
                 "pred_class_2_pixels": int((pred == 2).sum()),
                 "gt_class_1_pixels": int((gt == 1).sum()),
                 "gt_class_2_pixels": int((gt == 2).sum()),
+                **measurement_row,
             }
             case_metrics.append(row)
             logging.info("case=%s %s", case_name, format_multiclass_metrics(metrics, args.num_classes))
@@ -215,6 +252,21 @@ def main():
         summary[f"class_{class_idx}_avg_dice"] = float(np.nanmean([row[f"class_{class_idx}_dice"] for row in case_metrics]))
         summary[f"class_{class_idx}_avg_iou"] = float(np.nanmean([row[f"class_{class_idx}_iou"] for row in case_metrics]))
         summary[f"class_{class_idx}_avg_hd95"] = float(np.nanmean([row[f"class_{class_idx}_hd95"] for row in case_metrics]))
+    if not args.disable_measurement:
+        measurable = [row for row in case_metrics if row.get("fissure_measurement_status") == "ok"]
+        summary.update({
+            "measurement_class": args.measurement_class,
+            "num_measurable_fissures": len(measurable),
+            "avg_fissure_width_px": float(np.mean([row["fissure_width_px"] for row in measurable])) if measurable else float("nan"),
+            "avg_fissure_depth_px": float(np.mean([row["fissure_depth_px"] for row in measurable])) if measurable else float("nan"),
+            "avg_fissure_mean_width_px": float(np.mean([row["fissure_mean_width_px"] for row in measurable])) if measurable else float("nan"),
+        })
+        if measurable and "fissure_width_mm" in measurable[0]:
+            summary.update({
+                "avg_fissure_width_mm": float(np.mean([row["fissure_width_mm"] for row in measurable])),
+                "avg_fissure_depth_mm": float(np.mean([row["fissure_depth_mm"] for row in measurable])),
+                "avg_fissure_mean_width_mm": float(np.mean([row["fissure_mean_width_mm"] for row in measurable])),
+            })
 
     csv_path = save_dir / "case_metrics.csv"
     with csv_path.open("w", newline="", encoding="utf-8") as csv_file:

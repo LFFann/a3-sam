@@ -21,6 +21,12 @@ if REPO_ROOT not in sys.path:
 from dataloader.dataset import build_Dataset
 from dataloader.transforms import build_transforms
 from state_modules import A3PASSNet
+from utils.lateral_fissure_measurement import (
+    annotate_lateral_fissure_measurement,
+    measure_lateral_fissure,
+    measurement_to_row,
+    parse_pixel_spacing,
+)
 from utils.training_monitor import save_evaluation_artifacts
 from utils.utils import eval
 
@@ -56,6 +62,10 @@ def parse_args():
     parser.add_argument("--pass_state_dim", type=int, default=64)
     parser.add_argument("--pass_base_channels", type=int, default=32)
     parser.add_argument("--pass_state_lr", type=float, default=0.001)
+    parser.add_argument("--pixel_spacing", type=str, default="",
+                        help="optional pixel spacing in mm, either one value or row,col")
+    parser.add_argument("--disable_measurement", action="store_true",
+                        help="disable lateral fissure width/depth measurement outputs")
     return parser.parse_args()
 
 
@@ -100,7 +110,7 @@ def safe_eval(test_label, prob_map):
 
 
 def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_mask: np.ndarray,
-                      pass_mask: np.ndarray, sgdl_mask: np.ndarray):
+                      pass_mask: np.ndarray, sgdl_mask: np.ndarray, measurement_overlay: np.ndarray = None):
     dirs = {
         "original": save_dir / "original",
         "gt_mask": save_dir / "gt_mask",
@@ -111,6 +121,8 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_
         "overlay_pass": save_dir / "overlay_pass",
         "overlay_sgdl": save_dir / "overlay_sgdl",
     }
+    if measurement_overlay is not None:
+        dirs["measurement_overlay"] = save_dir / "measurement_overlay"
     for directory in dirs.values():
         directory.mkdir(parents=True, exist_ok=True)
 
@@ -122,6 +134,8 @@ def save_case_outputs(save_dir: Path, case_name: str, ori_image: np.ndarray, gt_
     cv2.imwrite(str(dirs["pred_mask_sgdl"] / case_name), sgdl_mask)
     cv2.imwrite(str(dirs["overlay_pass"] / case_name), overlay_mask(ori_image, pass_mask, color=(0, 0, 255)))
     cv2.imwrite(str(dirs["overlay_sgdl"] / case_name), overlay_mask(ori_image, sgdl_mask, color=(0, 255, 0)))
+    if measurement_overlay is not None:
+        cv2.imwrite(str(dirs["measurement_overlay"] / case_name), measurement_overlay)
 
 
 def main():
@@ -129,6 +143,7 @@ def main():
     save_dir = Path(args.save_dir)
     log_path = setup_logger(save_dir)
     logging.info("Prediction arguments: %s", args)
+    pixel_spacing = parse_pixel_spacing(args.pixel_spacing)
 
     data_transforms = build_transforms(args)
     test_dataset = build_Dataset(
@@ -161,7 +176,19 @@ def main():
             sgdl_mask = binary_mask_from_softmax(out["fusion_soft"])
             gt_mask = (test_label.squeeze(0).detach().cpu().numpy() * 255).astype(np.uint8)
 
-            save_case_outputs(save_dir, case_name, ori_image, gt_mask, pass_mask, sgdl_mask)
+            measurement_row = {}
+            measurement_overlay = None
+            if not args.disable_measurement:
+                measurement = measure_lateral_fissure(pass_mask, pixel_spacing=pixel_spacing)
+                measurement_row = measurement_to_row(measurement)
+                measurement_overlay = annotate_lateral_fissure_measurement(
+                    ori_image,
+                    pass_mask,
+                    measurement=measurement,
+                    pixel_spacing=pixel_spacing,
+                )
+
+            save_case_outputs(save_dir, case_name, ori_image, gt_mask, pass_mask, sgdl_mask, measurement_overlay)
 
             case_info = {
                 "index": i_batch,
@@ -178,6 +205,7 @@ def main():
                 "pass_pred_positive_pixels": int((pass_mask > 0).sum()),
                 "sgdl_pred_positive_pixels": int((sgdl_mask > 0).sum()),
                 "gt_positive_pixels": int((gt_mask > 0).sum()),
+                **measurement_row,
             }
             case_metrics.append(case_info)
             logging.info(
@@ -202,6 +230,20 @@ def main():
         "sgdl_avg_iou": float(np.mean([item["sgdl_iou"] for item in valid_metrics])) if valid_metrics else float("nan"),
         "sgdl_avg_hd95": float(np.mean([item["sgdl_hd95"] for item in valid_metrics])) if valid_metrics else float("nan"),
     }
+    if not args.disable_measurement:
+        measurable = [item for item in case_metrics if item.get("fissure_measurement_status") == "ok"]
+        summary.update({
+            "num_measurable_fissures": len(measurable),
+            "avg_fissure_width_px": float(np.mean([item["fissure_width_px"] for item in measurable])) if measurable else float("nan"),
+            "avg_fissure_depth_px": float(np.mean([item["fissure_depth_px"] for item in measurable])) if measurable else float("nan"),
+            "avg_fissure_mean_width_px": float(np.mean([item["fissure_mean_width_px"] for item in measurable])) if measurable else float("nan"),
+        })
+        if measurable and "fissure_width_mm" in measurable[0]:
+            summary.update({
+                "avg_fissure_width_mm": float(np.mean([item["fissure_width_mm"] for item in measurable])),
+                "avg_fissure_depth_mm": float(np.mean([item["fissure_depth_mm"] for item in measurable])),
+                "avg_fissure_mean_width_mm": float(np.mean([item["fissure_mean_width_mm"] for item in measurable])),
+            })
 
     csv_path = save_dir / "case_metrics.csv"
     fieldnames = list(case_metrics[0].keys()) if case_metrics else [
