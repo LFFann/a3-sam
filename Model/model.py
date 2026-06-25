@@ -7,6 +7,7 @@ import torch
 from einops import rearrange, repeat
 from einops.layers.torch import Rearrange
 from torch import nn, einsum
+from utils.entropy import normalized_entropy_map
 
 
 class FeedForward(nn.Module):
@@ -205,8 +206,7 @@ class KnowSAM(nn.Module):
         self.Discriminator = Discriminator(in_channels=args.num_classes, out_conv_channels=args.num_classes)
 
     def get_entropy_map(self, p):
-        ent_map = -1 * torch.sum(p * torch.log(p + 1e-6), dim=1, keepdim=True)
-        return ent_map
+        return normalized_entropy_map(p)
 
     def forward(self, x):
         x0_u = self.UNet.in_conv(x)

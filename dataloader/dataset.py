@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset, DataLoader
 from utils.utils import patients_to_slices
+from utils.label_validation import validate_class_index_mask
 
 class build_Dataset(Dataset):
     def __init__(self, args, data_dir, split, transform=None, labeled_slice=None, model="None"):
@@ -146,7 +147,7 @@ class build_Dataset(Dataset):
                 if raw_label is None:
                     raise FileNotFoundError(f"Failed to read mask: {label_path}")
                 if getattr(self.args, "num_classes", 2) > 2:
-                    label = raw_label.astype(np.float32)
+                    label = validate_class_index_mask(raw_label, self.args.num_classes, source=label_path).astype(np.float32)
                 else:
                     label = (raw_label > 0).astype(np.float32)
             if "val" in self.split or "test" in self.split:
@@ -166,9 +167,10 @@ class build_Dataset(Dataset):
                         label = data['mask']
 
             if getattr(self.args, "num_classes", 2) > 2:
-                label = np.rint(label)
-                label[label < 0] = 0
-                label[label >= self.args.num_classes] = 0
+                if is_unlabeled_train_sample:
+                    label = np.zeros_like(label, dtype=np.int64)
+                else:
+                    label = validate_class_index_mask(label, self.args.num_classes, source=label_path)
             else:
                 label[label < 0.5] = 0
                 label[label > 0.5] = 1
@@ -188,8 +190,11 @@ class build_Dataset(Dataset):
                 h5f = h5py.File(case)
                 image = h5f['image'][:].astype(np.float32)
                 label = h5f['label'][:].astype(np.float32)
-                if idx >= self.sample_list_labeled:
+                is_unlabeled_train_sample = idx >= self.sample_list_labeled
+                if is_unlabeled_train_sample:
                     label = np.zeros_like(label, dtype=np.float32)
+                elif getattr(self.args, "num_classes", 2) > 2:
+                    label = validate_class_index_mask(label, self.args.num_classes, source=case)
                 if self.transform:
                     if idx < self.sample_list_labeled:
                         data = self.transform["train_weak"](image=image, mask=label)
@@ -199,6 +204,11 @@ class build_Dataset(Dataset):
                         data = self.transform["train_strong"](image=image, mask=label)
                         image = data['image']
                         label = data['mask']
+                if getattr(self.args, "num_classes", 2) > 2:
+                    if is_unlabeled_train_sample:
+                        label = np.zeros_like(label, dtype=np.int64)
+                    else:
+                        label = validate_class_index_mask(label, self.args.num_classes, source=case)
                 image = np.expand_dims(image, axis=0)
                 label = label
                 image, label = torch.tensor(image), torch.tensor(label)
@@ -210,6 +220,8 @@ class build_Dataset(Dataset):
                 h5f = h5py.File(case)
                 image = h5f['image'][:].astype('float32')
                 label = h5f['label'][:].astype('float32')
+                if getattr(self.args, "num_classes", 2) > 2:
+                    label = validate_class_index_mask(label, self.args.num_classes, source=case)
 
                 image, label = torch.tensor(image), torch.tensor(label)
                 if self.model != "CAML":

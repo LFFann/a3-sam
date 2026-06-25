@@ -2,6 +2,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from utils.entropy import normalized_entropy_map
 
 
 class Discriminator(torch.nn.Module):
@@ -49,8 +50,7 @@ class Discriminator(torch.nn.Module):
         )
 
     def get_entropy_map(self, p):
-        ent_map = -1 * torch.sum(p * torch.log(p + 1e-6), dim=1, keepdim=True)
-        return ent_map
+        return normalized_entropy_map(p)
 
     def forward(self, pred_UNet, pred_YNet, pred_UNet_soft,  pred_VNet_soft, entmap1, entmap2):
 
@@ -60,12 +60,16 @@ class Discriminator(torch.nn.Module):
         pred_UNet_one_hot = F.one_hot(pred_UNet_label, num_classes=num_classes).permute(0, 3, 1, 2)
         pred_YNet_one_hot = F.one_hot(pred_YNet_label, num_classes=num_classes).permute(0, 3, 1, 2)
 
-        ambiguous_area = torch.abs(pred_UNet_one_hot - pred_YNet_one_hot).to(dtype=torch.float32)
-        uncertainty_area = torch.cat((entmap1, entmap2), dim=1)
+        ambiguous_area = torch.abs(pred_UNet_one_hot - pred_YNet_one_hot).to(
+            device=pred_UNet_soft.device,
+            dtype=pred_UNet_soft.dtype,
+        )
+        uncertainty_area = torch.cat((entmap1, entmap2), dim=1).clamp(0.0, 1.0)
+        certainty_area = 1.0 - uncertainty_area
         pred_logits = torch.cat((pred_UNet, pred_YNet), dim=1)
 
         ambiguous_info = self.ambiguous_conv(1 - ambiguous_area)
-        uncertainty_info = self.entmap_conv(1 - uncertainty_area)
+        uncertainty_info = self.entmap_conv(certainty_area)
         pred_info = self.logits_conv(pred_logits)
 
         x = torch.cat((ambiguous_info, uncertainty_info, pred_info), dim=1)

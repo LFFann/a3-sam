@@ -101,9 +101,10 @@ bash ./train_v100_multiclass.sh
 
 The default V100 profile uses `BATCH_SIZE=32`, `LABELED_BS=16`,
 `MAX_ITERATIONS=10000`, and `MIXED_ITERATIONS=1000`. Keep
-`BATCH_SIZE - LABELED_BS >= LABELED_BS`; the mixup path assumes the unlabeled
-half is at least as large as the labeled half. If memory is still underused,
-try `BATCH_SIZE=40 LABELED_BS=20`. If CUDA OOM occurs, fall back to
+`BATCH_SIZE == 2 * LABELED_BS`: the first `labeled_bs` samples are labeled
+samples, the next `labeled_bs` samples are unlabeled samples, and UGDA performs
+one-to-one bidirectional mixup between the two halves. If memory is still
+underused, try `BATCH_SIZE=40 LABELED_BS=20`. If CUDA OOM occurs, fall back to
 `BATCH_SIZE=24 LABELED_BS=12`.
 
 ## Test

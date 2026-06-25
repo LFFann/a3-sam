@@ -9,6 +9,7 @@ from tqdm import tqdm
 from dataloader.dataset import build_Dataset
 from torch.utils.data import DataLoader
 from utils.utils import patients_to_slices
+from utils.training_validation import validate_ugda_batch_config
 from dataloader.transforms import build_transforms, build_weak_strong_transforms
 from dataloader.TwoStreamBatchSampler import TwoStreamBatchSampler
 
@@ -100,6 +101,7 @@ def get_current_consistency_weight(epoch):
 def train(args, snapshot_path):
     batch_size = args.batch_size
     max_iterations = args.max_iterations
+    validate_ugda_batch_config(args.batch_size, args.labeled_bs)
     # model
     trainer = Trainer(args)
     # dataset

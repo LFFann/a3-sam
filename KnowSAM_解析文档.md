@@ -504,7 +504,7 @@ SAM 的输出作为 teacher，引导 UNet 和 VNet 学习。
 
 - `dc`
 - `jc`
-- `hausdorff_distance * 0.95`
+- `medpy.metric.binary.hd95`
 
 这里需要特别注意：
 

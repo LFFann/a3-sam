@@ -6,7 +6,9 @@ from Model.sam.build_sam import sam_model_registry
 import torch.optim as optim
 from utils.losses import dice_loss, loss_diff1, loss_diff2, KDLoss, DiceLoss
 import logging
-from utils.utils import dice_coef, multiclass_segmentation_metrics
+from utils.utils import dice_coef, multiclass_segmentation_metrics, safe_nanmean
+from utils.entropy import normalized_entropy_map
+from utils.training_validation import validate_ugda_runtime_batch
 
 import numpy as np
 
@@ -14,10 +16,6 @@ from Model.model import KnowSAM
 from prediction_ACDC import test_single_volume
 
 ce_loss = torch.nn.CrossEntropyLoss()
-
-GPUdevice = torch.device('cuda', 0)
-pos_weight = torch.ones([1]).cuda(device=GPUdevice)*2
-criterion_G = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 
 
 class Trainer(nn.Module):
@@ -58,16 +56,13 @@ class Trainer(nn.Module):
             phase = 1.0 - current / rampup_length
             return float(np.exp(-5.0 * phase * phase))
 
-    def entropy_loss(self, p, C=2):
-        # p N*C*W*H*D
-        y1 = -1 * torch.sum(p * torch.log(p + 1e-6), dim=1) / \
-             torch.tensor(np.log(C)).cuda()
-        ent = torch.mean(y1)
-        return ent
+    def entropy_loss(self, p, C=None):
+        if C is not None and C != p.shape[1]:
+            raise ValueError(f"entropy_loss received C={C}, but probability tensor has {p.shape[1]} channels")
+        return normalized_entropy_map(p).mean()
 
     def get_entropy_map(self, p):
-        ent_map = -1 * torch.sum(p * torch.log(p + 1e-6), dim=1, keepdim=True)
-        return ent_map
+        return normalized_entropy_map(p)
 
     def get_current_consistency_weight(self, epoch):
         # Consistency ramp-up from https://arxiv.org/abs/1610.02242
@@ -75,12 +70,24 @@ class Trainer(nn.Module):
 
     def mix_up(self, fusion_map_soft, volume_batch, pseudo_label, labeled_label, consistency_weight, patch_size=4,
                top_k=5):
+        actual_batch_size = int(volume_batch.shape[0])
+        labeled_bs, unlabeled_bs = validate_ugda_runtime_batch(actual_batch_size, int(self.args.labeled_bs))
+        _, _, height, width = volume_batch.shape
+        if height % patch_size != 0 or width % patch_size != 0:
+            raise ValueError(
+                f"UGDA mix_up requires H and W divisible by grid_size={patch_size}. "
+                f"Received H={height}, W={width}."
+            )
+        grid_cells = patch_size * patch_size
+        if not 1 <= top_k <= grid_cells:
+            raise ValueError(f"UGDA mix_up requires 1 <= top_k <= {grid_cells}. Received top_k={top_k}.")
+
         unlabel_pseudo_label = torch.argmax(pseudo_label.clone(), dim=1)
-        entropy_unlab = self.get_entropy_map(fusion_map_soft[self.args.labeled_bs:])
-        entropy_lab = self.get_entropy_map(fusion_map_soft[:self.args.labeled_bs])
+        entropy_unlab = self.get_entropy_map(fusion_map_soft[labeled_bs:])
+        entropy_lab = self.get_entropy_map(fusion_map_soft[:labeled_bs])
         pooling = nn.AdaptiveAvgPool2d((patch_size, patch_size))
-        entropy_unlab = pooling(entropy_unlab).view(self.args.labeled_bs, -1)
-        entropy_lab = pooling(entropy_lab).view(self.args.labeled_bs, -1)
+        entropy_unlab = pooling(entropy_unlab).reshape(unlabeled_bs, -1)
+        entropy_lab = pooling(entropy_lab).reshape(labeled_bs, -1)
 
         # _, min_indices_flat = torch.topk(entropy_unlab, top_k, largest=False)
         _, min_indices_flat = torch.topk(entropy_unlab, top_k, largest=True)
@@ -90,24 +97,25 @@ class Trainer(nn.Module):
         min_indices_2d_lab = torch.stack([min_indices_flat_lab // patch_size, min_indices_flat_lab % patch_size],
                                          dim=-1)
 
-        labeled_volume_batch = volume_batch[:self.args.labeled_bs]
-        unlabeled_volume_batch = volume_batch[self.args.labeled_bs:]
+        labeled_volume_batch = volume_batch[:labeled_bs]
+        unlabeled_volume_batch = volume_batch[labeled_bs:]
 
-        unlabeled_volume_batch_mix = torch.zeros_like(unlabeled_volume_batch).cuda()
-        unlabel_pseudo_label_mix = torch.zeros_like(unlabel_pseudo_label).cuda()
-        labeled_volume_batch_mix = torch.zeros_like(labeled_volume_batch).cuda()
-        labeled_pseudo_label_mix = torch.zeros_like(labeled_label).cuda()
+        unlabeled_volume_batch_mix = torch.zeros_like(unlabeled_volume_batch)
+        unlabel_pseudo_label_mix = torch.zeros_like(unlabel_pseudo_label)
+        labeled_volume_batch_mix = torch.zeros_like(labeled_volume_batch)
+        labeled_pseudo_label_mix = torch.zeros_like(labeled_label)
 
-        patch_h = int(self.args.image_size / patch_size)
-        for b in range(self.args.labeled_bs):
+        patch_h = height // patch_size
+        patch_w = width // patch_size
+        for b in range(labeled_bs):
             index = min_indices_2d[b]
-            img_mask = torch.zeros((self.args.image_size, self.args.image_size)).cuda()
+            img_mask = torch.zeros((height, width), device=volume_batch.device, dtype=volume_batch.dtype)
             index_lab = min_indices_2d_lab[b]
-            img_mask_lab = torch.zeros((self.args.image_size, self.args.image_size)).cuda()
+            img_mask_lab = torch.zeros((height, width), device=volume_batch.device, dtype=volume_batch.dtype)
             for n in index:
-                img_mask[n[0] * patch_h: (n[0] + 1) * patch_h, n[1] * patch_h: (n[1] + 1) * patch_h] = 1
+                img_mask[n[0] * patch_h: (n[0] + 1) * patch_h, n[1] * patch_w: (n[1] + 1) * patch_w] = 1
             for n in index_lab:
-                img_mask_lab[n[0] * patch_h: (n[0] + 1) * patch_h, n[1] * patch_h: (n[1] + 1) * patch_h] = 1
+                img_mask_lab[n[0] * patch_h: (n[0] + 1) * patch_h, n[1] * patch_w: (n[1] + 1) * patch_w] = 1
 
             unlabeled_volume_batch_mix[b] = labeled_volume_batch[b] * img_mask + unlabeled_volume_batch[b] * (1 - img_mask)
             unlabel_pseudo_label_mix[b] = labeled_label[b] * img_mask + unlabel_pseudo_label[b] * (1 - img_mask)
@@ -146,7 +154,10 @@ class Trainer(nn.Module):
 
         fusion_map_soft = torch.softmax(fusion_map, dim=1)
         points_embedding, boxes_embedding, mask_embedding = self.sam_model.super_prompt(image_embeddings)
-        low_res_masks_all = torch.empty((self.args.batch_size, 0, int(self.args.image_size/4), int(self.args.image_size/4)), device=self.args.device)
+        low_res_masks_all = torch.empty(
+            (volume_batch.shape[0], 0, int(self.args.image_size / 4), int(self.args.image_size / 4)),
+            device=self.args.device,
+        )
 
         for i in range(self.args.num_classes):
             sparse_embeddings, dense_embeddings = self.sam_model.prompt_encoder(
@@ -326,7 +337,7 @@ class Trainer(nn.Module):
                 if not records:
                     continue
                 avg_record = {
-                    key: float(np.nanmean([record[key] for record in records]))
+                    key: safe_nanmean([record[key] for record in records])
                     for key in records[0].keys()
                 }
                 class_parts = []

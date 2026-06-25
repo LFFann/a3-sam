@@ -9,8 +9,6 @@ from pathlib import Path
 import cv2
 import numpy as np
 import torch
-from hausdorff import hausdorff_distance
-from medpy import metric
 from torch.utils.data import DataLoader
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +26,7 @@ from utils.lateral_fissure_measurement import (
     parse_pixel_spacing,
 )
 from utils.training_monitor import save_evaluation_artifacts
+from utils.utils import _binary_class_metrics, safe_nanmean
 
 
 CLASS_COLORS = {
@@ -103,19 +102,7 @@ def overlay_multiclass(image_bgr: np.ndarray, mask: np.ndarray, alpha=0.35):
 
 
 def class_metrics(gt: np.ndarray, pred: np.ndarray, class_idx: int):
-    gt_c = gt == class_idx
-    pred_c = pred == class_idx
-    gt_sum = gt_c.sum()
-    pred_sum = pred_c.sum()
-    if gt_sum == 0 and pred_sum == 0:
-        return 1.0, 1.0, 0.0
-    if gt_sum == 0 or pred_sum == 0:
-        return 0.0, 0.0, float("nan")
-    return (
-        float(metric.binary.dc(pred_c, gt_c)),
-        float(metric.binary.jc(pred_c, gt_c)),
-        float(hausdorff_distance(gt_c.astype(np.uint8), pred_c.astype(np.uint8)) * 0.95),
-    )
+    return _binary_class_metrics(gt == class_idx, pred == class_idx)
 
 
 def evaluate_multiclass(gt: np.ndarray, pred: np.ndarray, num_classes: int):
@@ -128,9 +115,10 @@ def evaluate_multiclass(gt: np.ndarray, pred: np.ndarray, num_classes: int):
         result[f"class_{class_idx}_hd95"] = hd95
         rows.append((dice, iou, hd95))
     metrics_array = np.array(rows, dtype=np.float32)
-    result["dice"] = float(np.nanmean(metrics_array[:, 0]))
-    result["iou"] = float(np.nanmean(metrics_array[:, 1]))
-    result["hd95"] = float(np.nanmean(metrics_array[:, 2]))
+    result["dice"] = safe_nanmean(metrics_array[:, 0])
+    result["iou"] = safe_nanmean(metrics_array[:, 1])
+    result["hd95"] = safe_nanmean(metrics_array[:, 2])
+    result["valid_hd95_count"] = int(np.isfinite(metrics_array[:, 2]).sum())
     return result
 
 
@@ -244,14 +232,18 @@ def main():
         "save_dir": str(save_dir.resolve()),
         "log_path": str(log_path.resolve()),
         "num_cases": len(case_metrics),
-        "avg_dice": float(np.nanmean([row["dice"] for row in valid])) if valid else float("nan"),
-        "avg_iou": float(np.nanmean([row["iou"] for row in valid])) if valid else float("nan"),
-        "avg_hd95": float(np.nanmean([row["hd95"] for row in valid])) if valid else float("nan"),
+        "avg_dice": safe_nanmean([row["dice"] for row in valid]) if valid else float("nan"),
+        "avg_iou": safe_nanmean([row["iou"] for row in valid]) if valid else float("nan"),
+        "avg_hd95": safe_nanmean([row["hd95"] for row in valid]) if valid else float("nan"),
+        "valid_hd95_count": int(sum(row["valid_hd95_count"] for row in valid)) if valid else 0,
     }
     for class_idx in range(1, args.num_classes):
-        summary[f"class_{class_idx}_avg_dice"] = float(np.nanmean([row[f"class_{class_idx}_dice"] for row in case_metrics]))
-        summary[f"class_{class_idx}_avg_iou"] = float(np.nanmean([row[f"class_{class_idx}_iou"] for row in case_metrics]))
-        summary[f"class_{class_idx}_avg_hd95"] = float(np.nanmean([row[f"class_{class_idx}_hd95"] for row in case_metrics]))
+        summary[f"class_{class_idx}_avg_dice"] = safe_nanmean([row[f"class_{class_idx}_dice"] for row in case_metrics])
+        summary[f"class_{class_idx}_avg_iou"] = safe_nanmean([row[f"class_{class_idx}_iou"] for row in case_metrics])
+        summary[f"class_{class_idx}_avg_hd95"] = safe_nanmean([row[f"class_{class_idx}_hd95"] for row in case_metrics])
+        summary[f"class_{class_idx}_valid_hd95_count"] = int(
+            np.isfinite([row[f"class_{class_idx}_hd95"] for row in case_metrics]).sum()
+        )
     if not args.disable_measurement:
         measurable = [row for row in case_metrics if row.get("fissure_measurement_status") == "ok"]
         summary.update({

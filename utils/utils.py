@@ -4,7 +4,35 @@ import numpy as np
 from medpy import metric
 import torch.nn.functional as F
 import matplotlib.pyplot as plt
-from hausdorff import hausdorff_distance
+from utils.entropy import normalized_entropy_map
+
+
+def safe_nanmean(values):
+    """Return the finite-value mean, or NaN when no finite values exist."""
+    values = np.asarray(values, dtype=np.float64)
+    finite = np.isfinite(values)
+    if not finite.any():
+        return float("nan")
+    return float(values[finite].mean())
+
+
+def safe_binary_hd95(pred_mask, true_mask, voxelspacing=None) -> float:
+    """Compute true HD95 with explicit empty-mask semantics."""
+    pred = np.asarray(pred_mask).astype(bool)
+    true = np.asarray(true_mask).astype(bool)
+    pred_sum = pred.sum()
+    true_sum = true.sum()
+    if pred_sum == 0 and true_sum == 0:
+        return 0.0
+    if pred_sum == 0 or true_sum == 0:
+        return float("nan")
+    try:
+        return float(metric.binary.hd95(pred, true, voxelspacing=voxelspacing))
+    except Exception as exc:
+        raise RuntimeError(
+            f"Failed to compute HD95 for masks with pred_sum={int(pred_sum)}, true_sum={int(true_sum)}, "
+            f"shape_pred={pred.shape}, shape_true={true.shape}, voxelspacing={voxelspacing}."
+        ) from exc
 
 
 def _binary_class_metrics(true_mask, pred_mask):
@@ -19,7 +47,7 @@ def _binary_class_metrics(true_mask, pred_mask):
     return (
         float(metric.binary.dc(pred_mask, true_mask)),
         float(metric.binary.jc(pred_mask, true_mask)),
-        float(hausdorff_distance(true_mask.astype(np.uint8), pred_mask.astype(np.uint8)) * 0.95),
+        safe_binary_hd95(pred_mask, true_mask),
     )
 
 
@@ -47,13 +75,15 @@ def multiclass_segmentation_metrics(y_true, y_pred, num_classes=None):
 
     if rows:
         metrics_array = np.array(rows, dtype=np.float32)
-        result["avg_dice"] = float(np.nanmean(metrics_array[:, 0]))
-        result["avg_iou"] = float(np.nanmean(metrics_array[:, 1]))
-        result["avg_hd95"] = float(np.nanmean(metrics_array[:, 2]))
+        result["avg_dice"] = safe_nanmean(metrics_array[:, 0])
+        result["avg_iou"] = safe_nanmean(metrics_array[:, 1])
+        result["avg_hd95"] = safe_nanmean(metrics_array[:, 2])
+        result["valid_hd95_count"] = int(np.isfinite(metrics_array[:, 2]).sum())
     else:
         result["avg_dice"] = 0.0
         result["avg_iou"] = 0.0
         result["avg_hd95"] = float("nan")
+        result["valid_hd95_count"] = 0
     return result
 
 
@@ -72,7 +102,7 @@ def eval(y_true, y_pred, thr=0.5, epsilon=0.001):
     single_class_res = []
     single_class_res.append(metric.binary.dc(y_pred, y_true))
     single_class_res.append(metric.binary.jc(y_pred, y_true))
-    single_class_res.append(hausdorff_distance(y_true, y_pred) * 0.95)
+    single_class_res.append(safe_binary_hd95(y_pred, y_true))
     return single_class_res
 
 
@@ -100,8 +130,7 @@ def evaluate_95hd(y_true, y_pred, thr=0.5):
     else:
         y_true = y_true.to(torch.float32).squeeze(0).squeeze(0).cpu().detach().numpy()
         y_pred = (y_pred > thr).to(torch.float32).squeeze(0).squeeze(0).cpu().detach().numpy()
-    hd = hausdorff_distance(y_true, y_pred)
-    return hd * 0.95
+    return safe_binary_hd95(y_pred, y_true)
 
 
 def calculate_iou(y_true, y_pred, thr=0.5):
@@ -124,12 +153,14 @@ def calculate_iou(y_true, y_pred, thr=0.5):
 def calculate_metric_percase(pred, gt):
     pred[pred > 0] = 1
     gt[gt > 0] = 1
-    if pred.sum() > 0:
+    if pred.sum() > 0 and gt.sum() > 0:
         dice = metric.binary.dc(pred, gt)
-        hd95 = metric.binary.hd95(pred, gt)
+        hd95 = safe_binary_hd95(pred, gt)
         return dice, hd95
+    if pred.sum() == 0 and gt.sum() == 0:
+        return 1.0, 0.0
     else:
-        return 0, 0
+        return 0, float("nan")
 
 
 def test_single_2D_colorImage(image, label, net, classes):
@@ -137,7 +168,11 @@ def test_single_2D_colorImage(image, label, net, classes):
     net.eval()
     label = label.squeeze(0).cpu().detach().numpy()
     with torch.no_grad():
-        out = net(image.cuda())
+        try:
+            device = next(net.parameters()).device
+        except StopIteration:
+            device = image.device
+        out = net(image.to(device))
         out = torch.nn.Sigmoid()(out)
         out = (out > thr).to(torch.float32)
         out = torch.argmax(out, dim=1).squeeze(0)
@@ -176,7 +211,7 @@ def get_uncertainty_map(model, image_batch, num_classes, T=8, uncertainty_bs=2):
     _, _, w, h = image_batch.shape
     volume_batch_r = image_batch.repeat(uncertainty_bs, 1, 1, 1)
     stride = volume_batch_r.shape[0] // uncertainty_bs
-    preds = torch.zeros([stride * T, num_classes, w, h]).cuda()  # init preds
+    preds = torch.zeros([stride * T, num_classes, w, h], device=image_batch.device, dtype=image_batch.dtype)
     for i in range(T // uncertainty_bs):
         ema_inputs = volume_batch_r + torch.clamp(torch.randn_like(volume_batch_r) * 0.1, -0.2, 0.2)  # add noise
         with torch.no_grad():
@@ -184,13 +219,13 @@ def get_uncertainty_map(model, image_batch, num_classes, T=8, uncertainty_bs=2):
     preds = F.softmax(preds, dim=1)
     preds = preds.reshape(T, stride, num_classes, w, h)
     preds = torch.mean(preds, dim=0)
-    uncertainty = -1.0 * torch.sum(preds * torch.log(preds + 1e-6), dim=1, keepdim=True)
+    uncertainty = normalized_entropy_map(preds)
     return uncertainty
 
 
 def get_no_noise_uncertainty_map(model, image_batch, num_classes, T=8): # uncertainty_bs must be divisible by T
     b, _, w, h = image_batch.shape
-    preds = torch.zeros([T * b, num_classes, w, h]).cuda()  # init preds
+    preds = torch.zeros([T * b, num_classes, w, h], device=image_batch.device, dtype=image_batch.dtype)
     for i in range(T):
         ema_inputs = image_batch
         with torch.no_grad():
@@ -199,14 +234,14 @@ def get_no_noise_uncertainty_map(model, image_batch, num_classes, T=8): # uncert
     preds = torch.nn.Sigmoid()(preds)
     preds = preds.reshape(T, b, num_classes, w, h)
     preds = torch.mean(preds, dim=0)
-    uncertainty = -1.0 * torch.sum(preds * torch.log(preds + 1e-6), dim=1, keepdim=True)
+    uncertainty = normalized_entropy_map(preds)
     return uncertainty
 
 
 def generate_mask(img):
     batch_size, channel, img_x, img_y = img.shape[0], img.shape[1], img.shape[2], img.shape[3]
-    loss_mask = torch.ones(batch_size, img_x, img_y).cuda()
-    mask = torch.ones(img_x, img_y).cuda()
+    loss_mask = torch.ones(batch_size, img_x, img_y, device=img.device)
+    mask = torch.ones(img_x, img_y, device=img.device)
     patch_x, patch_y = int(img_x*2/3), int(img_y*2/3)
     w = np.random.randint(0, img_x - patch_x)
     h = np.random.randint(0, img_y - patch_y)

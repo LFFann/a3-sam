@@ -15,6 +15,7 @@ LABELED_BS="${LABELED_BS:-16}"
 IMAGE_SIZE="${IMAGE_SIZE:-256}"
 LR="${LR:-1e-4}"
 UNET_LR="${UNET_LR:-0.003}"
+VNET_LR="${VNET_LR:-0.003}"
 MAX_ITERATIONS="${MAX_ITERATIONS:-10000}"
 MIXED_ITERATIONS="${MIXED_ITERATIONS:-1000}"
 VAL_INTERVAL="${VAL_INTERVAL:-50}"
@@ -32,6 +33,11 @@ if [[ ! -f "${SAM_CHECKPOINT}" ]]; then
   exit 1
 fi
 
+if (( BATCH_SIZE != 2 * LABELED_BS )); then
+  echo "UGDA requires BATCH_SIZE == 2 * LABELED_BS (got BATCH_SIZE=${BATCH_SIZE}, LABELED_BS=${LABELED_BS})" >&2
+  exit 1
+fi
+
 mkdir -p "${SNAPSHOT_PATH}"
 
 echo "Starting Multiclass KnowSAM training with:"
@@ -45,6 +51,7 @@ echo "  LABELED_BS=${LABELED_BS}"
 echo "  IMAGE_SIZE=${IMAGE_SIZE}"
 echo "  LR=${LR}"
 echo "  UNET_LR=${UNET_LR}"
+echo "  VNET_LR=${VNET_LR}"
 echo "  MAX_ITERATIONS=${MAX_ITERATIONS}"
 echo "  MIXED_ITERATIONS=${MIXED_ITERATIONS}"
 echo "  VAL_INTERVAL=${VAL_INTERVAL}"
@@ -64,6 +71,7 @@ echo "  CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-<unset>}"
   --image_size "${IMAGE_SIZE}" \
   -lr "${LR}" \
   -UNet_lr "${UNET_LR}" \
+  -VNet_lr "${VNET_LR}" \
   --max_iterations "${MAX_ITERATIONS}" \
   --mixed_iterations "${MIXED_ITERATIONS}" \
   --val_interval "${VAL_INTERVAL}" \

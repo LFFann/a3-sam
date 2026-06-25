@@ -33,6 +33,11 @@ if [[ ! -f "${SAM_CHECKPOINT}" ]]; then
   exit 1
 fi
 
+if (( BATCH_SIZE != 2 * LABELED_BS )); then
+  echo "UGDA requires BATCH_SIZE == 2 * LABELED_BS (got BATCH_SIZE=${BATCH_SIZE}, LABELED_BS=${LABELED_BS})" >&2
+  exit 1
+fi
+
 mkdir -p "${SNAPSHOT_PATH}"
 
 echo "Starting tuned Multiclass KnowSAM training with:"
