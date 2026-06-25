@@ -32,8 +32,11 @@ class Trainer(nn.Module):
         self.SGDL = KnowSAM(args).cuda().train()
 
         self.optimizer_sam = optim.Adam(self.sam_model.parameters(), lr=args.lr)
-        self.optimizer_SGDL = torch.optim.SGD(self.SGDL.parameters(), lr=args.UNet_lr, momentum=0.9,
-                                              weight_decay=0.0001)
+        self.optimizer_SGDL = torch.optim.SGD([
+            {"params": self.SGDL.UNet.parameters(), "lr": args.UNet_lr, "initial_lr": args.UNet_lr},
+            {"params": self.SGDL.VNet.parameters(), "lr": args.VNet_lr, "initial_lr": args.VNet_lr},
+            {"params": self.SGDL.Discriminator.parameters(), "lr": args.UNet_lr, "initial_lr": args.UNet_lr},
+        ], momentum=0.9, weight_decay=0.0001)
 
         self.best_performance_sam = 0.0
         self.best_performance_SGDL = 0.0
@@ -173,12 +176,18 @@ class Trainer(nn.Module):
         UNet_sup_loss = ce_loss(pred_UNet[:self.args.labeled_bs], label_batch[:self.args.labeled_bs].long()) + self.dice_loss(pred_UNet_soft[:self.args.labeled_bs], label_batch[:self.args.labeled_bs])
         UNet_cons_loss = loss_diff1(pred_UNet_soft, pred_VNet_soft.clone().detach())
         UNet_enp_loss = self.entropy_loss(pred_UNet_soft, C=self.args.num_classes)
-        UNet_kd_loss = self.KDLoss(pred_UNet.permute(0, 2, 3, 1).reshape(-1, 2), pred_sam.clone().detach().permute(0, 2, 3, 1).reshape(-1, 2))
+        UNet_kd_loss = self.KDLoss(
+            pred_UNet.permute(0, 2, 3, 1).reshape(-1, self.args.num_classes),
+            pred_sam.clone().detach().permute(0, 2, 3, 1).reshape(-1, self.args.num_classes),
+        )
 
         VNet_sup_loss = ce_loss(pred_VNet[:self.args.labeled_bs], label_batch[:self.args.labeled_bs].long()) + self.dice_loss(pred_VNet_soft[:self.args.labeled_bs], label_batch[:self.args.labeled_bs])
         VNet_cons_loss = loss_diff2(pred_VNet_soft, pred_UNet_soft.clone().detach())
         VNet_enp_loss = self.entropy_loss(pred_VNet_soft, C=self.args.num_classes)
-        VNet_kd_loss = self.KDLoss(pred_VNet.permute(0, 2, 3, 1).reshape(-1, 2), pred_sam.clone().detach().permute(0, 2, 3, 1).reshape(-1, 2))
+        VNet_kd_loss = self.KDLoss(
+            pred_VNet.permute(0, 2, 3, 1).reshape(-1, self.args.num_classes),
+            pred_sam.clone().detach().permute(0, 2, 3, 1).reshape(-1, self.args.num_classes),
+        )
 
         sam_sup_loss = ce_loss(pred_sam[:self.args.labeled_bs], label_batch[:self.args.labeled_bs].long()) + self.dice_loss(pred_sam_soft[:self.args.labeled_bs], label_batch[:self.args.labeled_bs])
 
@@ -206,11 +215,12 @@ class Trainer(nn.Module):
 
         lr_ = self.args.lr * (1.0 - iter_num / self.args.max_iterations)
         UNet_lr_ = self.args.UNet_lr * (1.0 - iter_num / self.args.max_iterations)
+        VNet_lr_ = self.args.VNet_lr * (1.0 - iter_num / self.args.max_iterations)
 
         for param_group in self.optimizer_sam.param_groups:
             param_group['lr'] = lr_
         for param_group in self.optimizer_SGDL.param_groups:
-            param_group['lr'] = UNet_lr_
+            param_group['lr'] = param_group['initial_lr'] * (1.0 - iter_num / self.args.max_iterations)
 
         logging.info('iteration %d : '
                      '  sam_loss : %f'
@@ -220,9 +230,10 @@ class Trainer(nn.Module):
                      '  UNet_VNet_loss : %f'
                      '  fusion_loss : %f'
                      '  UNet_lr_ : %10f'
+                     '  VNet_lr_ : %10f'
 
                      % (iter_num, sam_loss.item(), lr_,
-                        SGDL_loss.item(), (UNet_loss + VNet_loss) / 2, fusion_loss,  UNet_lr_,
+                        SGDL_loss.item(), (UNet_loss + VNet_loss) / 2, fusion_loss, UNet_lr_, VNet_lr_,
                         ))
 
     def val(self, val_loader, snapshot_path, iter_num):
