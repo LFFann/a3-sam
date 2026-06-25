@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${ROOT_DIR}"
 
 PYTHON_BIN="${PYTHON_BIN:-python}"
@@ -33,7 +33,7 @@ echo "  SPLIT=${SPLIT}"
 echo "  MODEL_PATH=${MODEL_PATH}"
 echo "  SAVE_DIR=${SAVE_DIR}"
 
-"${PYTHON_BIN}" ./variants/Multiclass_KnowSAM/prediction_multiclass.py \
+"${PYTHON_BIN}" ./prediction_multiclass.py \
   --data_path "${DATA_PATH}" \
   --dataset "${DATASET}" \
   --split "${SPLIT}" \

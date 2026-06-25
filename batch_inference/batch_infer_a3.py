@@ -37,7 +37,7 @@ GENERATED_SUFFIXES = (
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Batch inference for A3 ultrasound image folders. "
+        description="Batch inference for multiclass KnowSAM ultrasound image folders. "
                     "Input root should contain patient subfolders with images."
     )
     parser.add_argument(
@@ -52,27 +52,10 @@ def parse_args():
     )
     parser.add_argument(
         "--model-path",
-        default="./Results/train_260513_data_label1_v100_semi_106_117_13_13/SGDL_best_model.pth",
-        help="KnowSAM/SGDL checkpoint path, or PASS checkpoint when --variant a3_pass.",
+        default="./Results/Multiclass_KnowSAM_V100_bs32_10k_106_117_13_13/SGDL_best_model.pth",
+        help="Multiclass KnowSAM/SGDL checkpoint path.",
     )
-    parser.add_argument(
-        "--variant",
-        choices=("knowsam", "a3_pass"),
-        default="knowsam",
-        help="Model variant to run.",
-    )
-    parser.add_argument(
-        "--a3-pass-dir",
-        default="./variants/A3_PASS_KnowSAM",
-        help="A3-PASS variant folder containing state_modules.py.",
-    )
-    parser.add_argument(
-        "--head",
-        choices=("pass", "sgdl"),
-        default="pass",
-        help="For --variant a3_pass, choose PASS output or SGDL fusion output.",
-    )
-    parser.add_argument("--num-classes", type=int, default=2)
+    parser.add_argument("--num-classes", type=int, default=3)
     parser.add_argument("--in-channels", type=int, default=3)
     parser.add_argument("--image-size", type=int, default=256)
     parser.add_argument("--threshold", type=float, default=0.5)
@@ -106,9 +89,6 @@ def parse_args():
         action="store_true",
         help="Disable lateral fissure width/depth measurement outputs.",
     )
-    parser.add_argument("--pass-state-size", type=int, default=64)
-    parser.add_argument("--pass-state-dim", type=int, default=64)
-    parser.add_argument("--pass-base-channels", type=int, default=32)
     return parser.parse_args()
 
 
@@ -183,9 +163,6 @@ def build_model_args(args):
         thd=False,
         multimask=False,
         encoder_adapter=True,
-        pass_state_size=args.pass_state_size,
-        pass_state_dim=args.pass_state_dim,
-        pass_base_channels=args.pass_base_channels,
     )
 
 
@@ -202,15 +179,7 @@ def normalize_checkpoint(checkpoint):
 
 def build_model(args, device):
     model_args = build_model_args(args)
-    if args.variant == "knowsam":
-        model = KnowSAM(model_args, bilinear=False)
-    else:
-        a3_pass_dir = (REPO_ROOT / args.a3_pass_dir).resolve()
-        if not (a3_pass_dir / "state_modules.py").exists():
-            raise FileNotFoundError(f"state_modules.py not found in: {a3_pass_dir}")
-        sys.path.insert(0, str(a3_pass_dir))
-        from state_modules import A3PASSNet
-        model = A3PASSNet(model_args)
+    model = KnowSAM(model_args, bilinear=False)
 
     checkpoint = torch.load(args.model_path, map_location=device)
     model.load_state_dict(normalize_checkpoint(checkpoint))
@@ -227,15 +196,9 @@ def preprocess_image(image_bgr: np.ndarray, image_size: int):
     return torch.from_numpy(tensor)
 
 
-def infer_softmax(model, image_tensor: torch.Tensor, variant: str, head: str):
-    if variant == "knowsam":
-        _, _, _, _, fusion_logits = model(image_tensor)
-        return torch.softmax(fusion_logits, dim=1)
-
-    out = model(image_tensor)
-    if head == "sgdl":
-        return out["fusion_soft"]
-    return out["pass_soft"]
+def infer_softmax(model, image_tensor: torch.Tensor):
+    _, _, _, _, fusion_logits = model(image_tensor)
+    return torch.softmax(fusion_logits, dim=1)
 
 
 def colorize_mask(mask: np.ndarray):
@@ -317,7 +280,6 @@ def main():
     logging.info("Input root: %s", input_root)
     logging.info("Output root: %s", output_root if output_root else "same folder as each image")
     logging.info("Device: %s", device)
-    logging.info("Variant: %s", args.variant)
     logging.info("Checkpoint: %s", Path(args.model_path).resolve())
 
     image_paths = collect_images(input_root, args.include_keyword)
@@ -356,7 +318,7 @@ def main():
                 continue
 
             image_tensor = preprocess_image(image_bgr, args.image_size).to(device)
-            prob_map = infer_softmax(model, image_tensor, args.variant, args.head)
+            prob_map = infer_softmax(model, image_tensor)
             mask, prob_outputs = postprocess_prediction(prob_map, args, (width, height))
 
             if args.num_classes == 2:

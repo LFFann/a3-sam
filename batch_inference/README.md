@@ -1,6 +1,7 @@
-# Batch A3 Inference
+# Batch Multiclass KnowSAM Inference
 
-This folder contains a standalone batch inference script for raw A3 image folders.
+This folder contains a standalone batch inference script for raw ultrasound
+image folders using the current multiclass KnowSAM checkpoint.
 
 Expected default input layout:
 
@@ -23,12 +24,12 @@ patient_001/
   A3_001_measurement.png
 ```
 
-Run KnowSAM/SGDL inference:
+Run multiclass KnowSAM/SGDL inference:
 
 ```bash
 python batch_inference/batch_infer_a3.py ^
   --input-root "D:\A3_images" ^
-  --model-path ".\Results\train_260513_data_label1_v100_semi_106_117_13_13\SGDL_best_model.pth"
+  --model-path ".\Results\Multiclass_KnowSAM_V100_bs32_10k_106_117_13_13\SGDL_best_model.pth"
 ```
 
 Write outputs to a separate root while preserving patient folders:
@@ -37,22 +38,14 @@ Write outputs to a separate root while preserving patient folders:
 python batch_inference/batch_infer_a3.py ^
   --input-root "D:\A3_images" ^
   --output-root "D:\A3_predictions" ^
-  --model-path ".\Results\train_260513_data_label1_v100_semi_106_117_13_13\SGDL_best_model.pth"
-```
-
-Run A3-PASS inference:
-
-```bash
-python batch_inference/batch_infer_a3.py ^
-  --variant a3_pass ^
-  --input-root "D:\A3_images" ^
-  --model-path ".\Results\A3_PASS_KnowSAM_V100_label1_106_117_13_13\fold_0\PASS_best_model.pth"
+  --model-path ".\Results\Multiclass_KnowSAM_V100_bs32_10k_106_117_13_13\SGDL_best_model.pth"
 ```
 
 Useful options:
 
 - `--include-keyword A3`: only process filenames containing `A3`.
 - `--device cpu` or `--device cuda:0`: override automatic device selection.
+- `--num-classes 3`: run the default 3-class output head.
 - `--save-prob`: also save foreground probability PNG files.
 - `--pixel-spacing 0.12` or `--pixel-spacing 0.12,0.12`: also report width/depth in mm.
 - `--disable-measurement`: skip fissure width/depth measurement and `*_measurement.png`.
@@ -60,7 +53,23 @@ Useful options:
 
 The measurement overlay draws dashed lines for:
 
-- `width`: local fissure thickness at the thickest skeleton point.
-- `depth`: the main-axis extension length of the predicted fissure component.
+- `width`: the opening distance between the two lips of the lateral fissure.
+- `depth`: the perpendicular distance from the fissure sulcus bottom to the opening line.
 
-Numeric fields are written to `batch_inference_summary.csv` as `fissure_width_px`, `fissure_depth_px`, `fissure_mean_width_px`, and mm fields when pixel spacing is provided.
+Numeric fields are written to `batch_inference_summary.csv` as
+`fissure_width_px`, `fissure_depth_px`, `fissure_mean_width_px`, and mm fields
+when pixel spacing is provided.
+
+Measure saved masks directly:
+
+```bash
+python scripts/measure_output_masks.py ^
+  --input-root "Results\data_260513" ^
+  --output-dir "Results\data_260513\measurement_by_metric" ^
+  --overwrite
+```
+
+For multiclass masks, the direct script uses class `1` for lateral fissure
+metrics and class `2` for longitudinal fissure metrics by default. Override
+them with `--lateral-class` and `--longitudinal-class` if the label definition
+changes.

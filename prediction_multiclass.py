@@ -14,7 +14,7 @@ from medpy import metric
 from torch.utils.data import DataLoader
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-REPO_ROOT = os.path.abspath(os.path.join(CURRENT_DIR, "..", ".."))
+REPO_ROOT = CURRENT_DIR
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
